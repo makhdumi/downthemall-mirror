@@ -7,7 +7,6 @@ content dta-public	chrome/public/ contentaccessible
 skin	dta-public	classic/1.0 chrome/public/
 
 ## aux packages ##
-content dta-tests tests/
 content	dta-modules	modules/
 
 ## platform package ##
