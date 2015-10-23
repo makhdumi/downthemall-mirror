@@ -2562,13 +2562,32 @@ QueueItem.prototype = {
 					}
 				}
 
-				// nothing found, break
+				//nothing found, break
 				if (!biggest) {
 					break;
+				}				
+
+				if (!this.chunks || this.chunks.length == 0)
+					break;
+
+				// Dirty hacks for streaming! :D
+				// Instead of splitting the biggest chunk in two, keep chunks fix-sized
+				let latest = this.chunks[0];
+				for (let chunk of this.chunks) {
+					if (chunk.start > latest.end + 1) {
+						// discontinuous!
+						break;
+					}
+					latest = chunk;
 				}
-				let end = biggest.end;
-				biggest.end = biggest.start + biggest.written + Math.floor(biggest.remainder / 2);
-				downloadNewChunk(this, biggest.end + 1, end);
+
+				//let end = biggest.end;
+				//biggest.end = biggest.start + biggest.written + Math.floor(biggest.remainder / 2);
+				let chunk_size = 5*1024*1024;
+				latest.end = latest.start + chunk_size;
+				let end = latest.end + 1 + chunk_size;
+
+				downloadNewChunk(this, latest.end + 1, end);
 				rv = true;
 			}
 
