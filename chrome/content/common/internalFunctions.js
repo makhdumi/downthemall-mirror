@@ -6,12 +6,12 @@
 "use strict";
 /* jshint browser:true */
 /* global _ */
-const Cc = Components.classes;
-const Ci = Components.interfaces;
-const Cr = Components.results;
-const Cu = Components.utils;
-const ctor = Components.Constructor;
-const Exception = Components.Exception;
+var Cc = Components.classes;
+var Ci = Components.interfaces;
+var Cr = Components.results;
+var Cu = Components.utils;
+var ctor = Components.Constructor;
+var Exception = Components.Exception;
 
 // shared state defines
 
@@ -21,27 +21,27 @@ Cu.import("chrome://dta-modules/content/glue.jsm", this);
 		Object.defineProperty(this, k, {value: v, enumerable:true});
 	}
 }).call(this);
-const Preferences = require("preferences");
-const Mediator = require("support/mediator");
-const {FilterManager} = require("support/filtermanager");
-const {toURI, toURL} = require("support/stringfuncs");
-const {unloadWindow} = require("support/overlays");
-const DTA = require("api");
+var Preferences = require("preferences");
+var Mediator = require("support/mediator");
+var {FilterManager} = require("support/filtermanager");
+var {toURI, toURL} = require("support/stringfuncs");
+var {unloadWindow} = require("support/overlays");
+var DTA = require("api");
 
 function showPreferences(pane, command) Mediator.showPreferences(window, pane, command);
 function openUrl(url, ref) Mediator.openUrl(window, url, ref);
 
 
-const {
+var {
 	getIcon: getIcon,
 	getLargeIcon: _getLargeIcon,
 	getFavIcon: _getFavIcon
 } = require("support/icons");
-const getLargeIcon = (function() {
+var getLargeIcon = (function() {
 	const hidpi = window.matchMedia && window.matchMedia("(min-resolution: 2dppx)").matches;
 	return function getLargeIcon(f,ml) _getLargeIcon(f,ml, hidpi);
 })();
-const getFavIcon = (function() {
+var getFavIcon = (function() {
 	const RE_HTML = /html?$|aspx?$|php\d?$|py$|\/[^.]*$/i;
 	return function getFavIcon(uri, cb, tp) {
 		if (!RE_HTML.test(uri.path)) {
@@ -285,11 +285,11 @@ var Utils = {
 			}
 			const unit = sunits[i];
 			decimalPlace = arguments.length > 1 ? decimalPlace : unit[1];
-			return _(unit[0], [rv.toFixed(decimalPlace)]);
+			return _(unit[0], [rv.toFixed(decimalPlace)], unit[2] && Math.floor(rv));
 		};
 	}
 	Utils.formatBytes = createFormatter(
-		[['sizeB', 0], ['sizeKB', 1], ['sizeMB', 2], ['sizeGB', 2], ['sizeTB', 3]],
+		[['sizeB.2', 0, true], ['sizeKB', 1], ['sizeMB', 2], ['sizeGB', 2], ['sizeTB', 3]],
 		875);
 	Utils.formatSpeed = createFormatter(
 		[['sizeBs', 0], ['sizeKBs', 1], ['sizeMBs', 2], ['sizeGBs', 3]],
@@ -311,7 +311,7 @@ requireJoined(Utils, "support/stringfuncs");
  *           if stringID is not found or before the dialog was initialized
  * @author Nils
  */
-XPCOMUtils.defineLazyGetter(this, "_", function() {
+XPCOMUtils.defineLazyGetter(window, "_", function() {
 	let bundles = new Utils.StringBundles(document);
 	return function() {
 		if (arguments.length === 1) {
@@ -338,9 +338,9 @@ XPCOMUtils.defineLazyGetter(this, "_", function() {
  * @return A string representing the hash a in given encoding.
  * @author Nils
  */
-const HASH_HEX = 0x0;
-const HASH_BIN = 0x1;
-const HASH_B64 = 0x2;
+var HASH_HEX = 0x0;
+var HASH_BIN = 0x1;
+var HASH_B64 = 0x2;
 function hash(value, algorithm, encoding, datalen) {
 	var ch = new Instances.PlainHash();
 	if (!algorithm) {
@@ -371,21 +371,48 @@ function hash(value, algorithm, encoding, datalen) {
 }
 Object.freeze(Utils);
 
-const mapInSitu = Utils.mapInSitu;
-const filterInSitu = Utils.filterInSitu;
-const mapFilterInSitu = Utils.mapFilterInSitu;
-const filterMapInSitu = Utils.filterMapInSitu;
+var mapInSitu = Utils.mapInSitu;
+var filterInSitu = Utils.filterInSitu;
+var mapFilterInSitu = Utils.mapFilterInSitu;
+var filterMapInSitu = Utils.filterMapInSitu;
 
 require("support/iconcheat").loadWindow(window);
 
-this.__defineGetter__("DefaultDownloadsDirectory", function() {
-	let dlm = Cc["@mozilla.org/download-manager;1"].getService(Ci.nsIDownloadManager);
-	try {
-		return dlm.userDownloadsDirectory;
+var getDefaultDownloadsDirectory = (function() {
+	function oldFallback(callback) {
+		let dlm = Cc["@mozilla.org/download-manager;1"].getService(Ci.nsIDownloadManager);
+		var dir;
+		try {
+			dir = dlm.userDownloadsDirectory;
+		}
+		catch (ex) {
+			dir = dlm.defaultDownloadsDirectory;
+		}
+		callback(dir.path);
 	}
-	catch (ex) {}
-	return dlm.defaultDownloadsDirectory;
-});
+
+	try {
+		let Downloads = Cu.import("resource://gre/modules/Downloads.jsm", {}).Downloads;
+		if (!Downloads.getPreferredDownloadsDirectory) {
+			throw new Error("not supported");
+		}
+		return function newDownloads(callback) {
+			var p = Downloads.getPreferredDownloadsDirectory();
+			if (!p) {
+				oldFallback(callback);
+				return;
+			}
+			p.then(function success(r) {
+				callback(r);
+			}, function fail(e) {
+				oldFallback(callback);
+			});
+		};
+	}
+	catch (ex) {
+		return oldFallback;
+	}
+})();
 
 Object.defineProperty(window, "setTimeoutOnlyFun", {
 	value: function setTimeoutFun(cb, delay, p1, p2, p3) {

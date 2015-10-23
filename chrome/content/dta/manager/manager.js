@@ -2,51 +2,46 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 "use strict";
-/* global _, DTA, $, $$, Utils, Preferences, DefaultDownloadsDirectory, unloadWindow */
+/* global _, DTA, $, $$, Utils, Preferences, getDefaultDownloadsDirectory, unloadWindow */
 /* global $e, mapInSitu, filterMapInSitu, filterInSitu, mapFilterInSitu, setTimeoutOnlyFun */
 /* global toURI, toURL, showPreferences, openUrl, getLargeIcon */
 /* global Tree, Prefs */
 /* global QUEUED, PAUSED, CANCELED, FINISHING, COMPLETE, RUNNING, SPEED_COUNT, REFRESH_FREQ, MIN_CHUNK_SIZE */
 /* jshint browser:true, latedef:false */
 
-const {CoThreadListWalker} = require("support/cothreads");
-const Prompts = require("prompts");
-const {ByteBucket} = require("support/bytebucket");
-const {GlobalBucket} = require("manager/globalbucket");
-const {defer} = require("support/defer");
-const PrivateBrowsing = require("support/pbm");
-const {TimerManager} = require("support/timers");
-const {ContentHandling} = require("support/contenthandling");
-const {asyncMoveFile} = require("manager/asyncmovefile");
-const GlobalProgress = new (require("manager/globalprogress").GlobalProgress)(window);
-const RequestManipulation = require("support/requestmanipulation");
-const Limits = require("support/serverlimits");
-const {QueueStore} = require("manager/queuestore");
-const {SpeedStats} = require("manager/speedstats");
-const {FileExtensionSheet} = require("support/fileextsheet");
-const {UrlManager} = require("support/urlmanager");
-const {VisitorManager} = require("manager/visitormanager");
-const Preallocator = require("manager/preallocator");
-const {Chunk, hintChunkBufferSize} = require("manager/chunk");
-const {Connection} = require("manager/connection");
-const {createRenamer} = require("manager/renamer");
-const {memoize, identity} = require("support/memoize");
-const {Task} = require("support/promise");
-try {
-	this.Promise = require("support/promise").Promise;
-}
-catch (ex) {
-	// already defined
-}
-const {OS} = requireJSM("resource://gre/modules/osfile.jsm");
+var {CoThreadListWalker} = require("support/cothreads");
+var Prompts = require("prompts");
+var {ByteBucket} = require("support/bytebucket");
+var {GlobalBucket} = require("manager/globalbucket");
+var {defer} = require("support/defer");
+var PrivateBrowsing = require("support/pbm");
+var {TimerManager} = require("support/timers");
+var {ContentHandling} = require("support/contenthandling");
+var GlobalProgress = new (require("manager/globalprogress").GlobalProgress)(window);
+var RequestManipulation = require("support/requestmanipulation");
+var Limits = require("support/serverlimits");
+var {QueueStore} = require("manager/queuestore");
+var {SpeedStats} = require("manager/speedstats");
+var {FileExtensionSheet} = require("support/fileextsheet");
+var {UrlManager} = require("support/urlmanager");
+var {VisitorManager} = require("manager/visitormanager");
+var Preallocator = require("manager/preallocator");
+var {Chunk, hintChunkBufferSize} = require("manager/chunk");
+var {Connection} = require("manager/connection");
+var {createRenamer} = require("manager/renamer");
+var {memoize, identity} = require("support/memoize");
+var {moveFile} = require("support/movefile");
+var {Task} = requireJSM("resource://gre/modules/Task.jsm");
 
+// Use the main OS.File here!
+var {OS} = requireJSM("resource://gre/modules/osfile.jsm");
 
 /* global Version, AlertService, Decompressor, Verificator, FileExts:true */
-XPCOMUtils.defineLazyGetter(this, "Version", function() require("version"));
-XPCOMUtils.defineLazyGetter(this, "AlertService", function() require("support/alertservice"));
-XPCOMUtils.defineLazyGetter(this, "Decompressor", function() require("manager/decompressor").Decompressor);
-XPCOMUtils.defineLazyGetter(this, "Verificator", function() require("manager/verificator"));
-XPCOMUtils.defineLazyGetter(this, "FileExts", function() new FileExtensionSheet(window));
+XPCOMUtils.defineLazyGetter(window, "Version", function() require("version"));
+XPCOMUtils.defineLazyGetter(window, "AlertService", function() require("support/alertservice"));
+XPCOMUtils.defineLazyGetter(window, "Decompressor", function() require("manager/decompressor").Decompressor);
+XPCOMUtils.defineLazyGetter(window, "Verificator", function() require("manager/verificator"));
+XPCOMUtils.defineLazyGetter(window, "FileExts", function() new FileExtensionSheet(window));
 
 /* global TextCache_PAUSED, TextCache_QUEUED, TextCache_COMPLETE, TextCache_CANCELED, TextCache_NAS */
 /* global TextCache_UNKNOWN, TextCache_OFFLINE, TextCache_TIMEOUT, TextCache_STARTING, TextCache_DECOMPRESSING */
@@ -72,16 +67,16 @@ window.addEventListener("unload", dieEarly, false);
 
 var Timers = new TimerManager();
 
-const Dialog_loadDownloads_props =
+var Dialog_loadDownloads_props =
 	['contentType', 'conflicts', 'postData', 'destinationName', 'resumable', 'compression',
 		'fromMetalink', 'speedLimit'];
 function Dialog_loadDownloads_get(down, attr, def) (attr in down) ? down[attr] : (def ? def : '');
 
-const Dialog_serialize_props =
+var Dialog_serialize_props =
 	['fileName', 'fileNameFromUser', 'postData', 'description', 'title', 'resumable', 'mask', 'pathName',
 		'compression', 'contentType', 'conflicts', 'fromMetalink', 'speedLimit', "relaxSize"];
 
-const Dialog = {
+var Dialog = {
 	_observes: [
 		'quit-application-requested',
 		'quit-application-granted',
@@ -127,7 +122,8 @@ const Dialog = {
 	_running: [],
 	_autoClears: [],
 	completed: 0,
-	totalbytes: 0,
+	finishing: 0,
+	totalBytes: 0,
 	init: function() {
 		Prefs.init();
 
@@ -939,28 +935,15 @@ const Dialog = {
 		}
 	},
 	processAutoClears: (function() {
-		function _m(e) e.get();
+		function _m(e) e && e.get();
 		function _f(e) !!e;
 		return function() {
-			if (Prefs.autoClearComplete &&
-				this._autoClears.length &&
-				mapFilterInSitu(this._autoClears, _m, _f).length) {
+			if (Prefs.autoClearComplete && this._autoClears.length) {
 				Tree.remove(this._autoClears);
 				this._autoClears.length = 0;
 			}
 		};
 	})(),
-	checkSameName: function(download, path) {
-		for (let runner of this._running) {
-			if (runner === download) {
-				continue;
-			}
-			if (runner.destinationFile === path) {
-				return true;
-			}
-		}
-		return false;
-	},
 	scheduler: null,
 	startNext: function() {
 		try {
@@ -998,7 +981,8 @@ const Dialog = {
 				this.scheduler = Limits.getConnectionScheduler(Tree.all);
 				log(LOG_DEBUG, "rebuild scheduler");
 			}
-			while (this._running.length < Prefs.maxInProgress) {
+			let finishingPenality = Math.floor(this.finishing / 3);
+			while (this._running.length < Prefs.maxInProgress - finishingPenality) {
 				let d = this.scheduler.next(this._running);
 				if (!d) {
 					break;
@@ -1007,7 +991,9 @@ const Dialog = {
 					log(LOG_ERROR, "FIXME: scheduler returned unqueued download");
 					continue;
 				}
-				this.run(d);
+				if (!this.run(d)) {
+					break;
+				}
 				rv = true;
 			}
 			return rv;
@@ -1019,7 +1005,7 @@ const Dialog = {
 	},
 	run: function(download, forced) {
 		if (this.offline) {
-			return;
+			return false;
 		}
 		download.forced = !!forced;
 		download.status = TextCache_STARTING;
@@ -1030,7 +1016,7 @@ const Dialog = {
 			download.partialSize = download.totalSize;
 			log(LOG_INFO, "Download seems to be complete; likely a left-over from a crash, finish it:" + download);
 			download.finishDownload();
-			return;
+			return true;
 		}
 		download.timeLastProgress = Utils.getTimestamp();
 		download.timeStart = Utils.getTimestamp();
@@ -1048,12 +1034,16 @@ const Dialog = {
 		this._running.push(download);
 		download.prealloc();
 		download.resumeDownload();
+		return true;
 	},
 	wasStopped: function(download) {
 		let idx = this._running.indexOf(download);
 		if (idx > -1) {
 			this._running.splice(idx, 1);
 		}
+	},
+	wasFinished: function() {
+		--this.finishing;
 	},
 	resetScheduler: function() {
 		if (!Dialog.scheduler) {
@@ -1074,7 +1064,7 @@ const Dialog = {
 			this._wasRunning = true;
 		}
 		else if (Prefs.autoClearComplete && state === COMPLETE) {
-			this._autoClears.push(weak(download));
+			this._autoClears.push(download);
 		}
 		if (!this._initialized || !this._wasRunning || state !== COMPLETE) {
 			return;
@@ -1142,7 +1132,7 @@ const Dialog = {
 		if (Tree.some(function(d) { return d.started && !d.canResumeLater && d.state === RUNNING; })) {
 			let rv = Prompts.confirmYN(
 				window,
-				_("confclose"),
+				_("confclose.2"),
 				_("nonresclose")
 			);
 			if (rv) {
@@ -1152,7 +1142,7 @@ const Dialog = {
 		if (Tree.some(function(d) d.isPrivate && d.state !== COMPLETE)) {
 			let rv = Prompts.confirmYN(
 				window,
-				_("confclose"),
+				_("confclose.2"),
 				_("privateclose")
 			);
 			if (rv) {
@@ -1306,7 +1296,7 @@ unloadWindow(window, function () {
 	Dialog.close();
 });
 
-const Metalinker = {
+var Metalinker = {
 	handleDownload: function(download) {
 		let file = download.tmpFile;
 
@@ -1393,11 +1383,23 @@ QueueItem.prototype = {
 			// kill the bucket via it's setter
 			this.bucket = null;
 		}
+		else if (this.state === COMPLETE) {
+			--Dialog.completed;
+		}
+		else if (this.state === FINISHING) {
+			--Dialog.finishing;
+		}
 		this.speed = '';
 		this._setStateInternal(nv);
 		if (this.state === RUNNING) {
 			// set up the bucket
 			this._bucket = new ByteBucket(this.speedLimit, 1.7);
+		}
+		else if (this.state === FINISHING) {
+			++Dialog.finishing;
+		}
+		else if (this.state === COMPLETE) {
+			++Dialog.completed;
 		}
 		Dialog.signal(this);
 		this.invalidate();
@@ -1451,7 +1453,7 @@ QueueItem.prototype = {
 		if (this._fileName === nv || this.fileNameFromUser) {
 			return nv;
 		}
-		log(LOG_ERROR, "fn is " + this._fileName + " nv: " + nv);
+		log(LOG_DEBUG, "fn is " + this._fileName + " nv: " + nv);
 		this._fileName = nv;
 		delete this._fileNameAndExtension;
 		this.rebuildDestination();
@@ -1798,7 +1800,7 @@ QueueItem.prototype = {
 		else if (this.totalSize <= 0) {
 			return _('transfered', [Utils.formatBytes(this.partialSize), TextCache_NAS]);
 		}
-		else if (this.state === COMPLETE) {
+		else if (this.state === COMPLETE || this.state == FINISHING) {
 			return Utils.formatBytes(this.totalSize);
 		}
 		return _('transfered', [Utils.formatBytes(this.partialSize), Utils.formatBytes(this.totalSize)]);
@@ -1893,72 +1895,81 @@ QueueItem.prototype = {
 		this.speeds.clear();
 		this.otherBytes = 0;
 	},
-	moveCompleted: function() {
+	moveCompleted: function*() {
 		if (this.state === CANCELED) {
 			throw Error("Cannot move incomplete file");
 		}
-		// safeguard against some failed chunks.
-		for (let c of this.chunks) {
-			c.close();
-		}
-		if (!(yield ConflictManager.resolve(this))) {
+		this.setState(FINISHING);
+		this.status = TextCache_MOVING;
+
+		if (!(yield this.resolveConflicts())) {
 			return;
 		}
-		let destination = new Instances.LocalFile(this.destinationPath);
-		yield Utils.makeDir(destination, Prefs.dirPermissions);
-		log(LOG_INFO, this.fileName + ": Move " + this.tmpFile.path + " to " + this.destinationFile);
-		let df = destination.clone();
-		df.append(this.destinationName);
+		let pinned = this.destinationFile;
+		ConflictManager.pin(pinned);
 		try {
-			yield OS.File.remove(df.path);
-		}
-		catch (ex) {
-			// no op
-		}
-		// move file
-		if (this.compression) {
-			this.setState(FINISHING);
-			this.status = TextCache_DECOMPRESSING;
-			let compressDeferred = Promise.defer();
-			new Decompressor(this, function(ex) {
-				if (ex) {
-					compressDeferred.reject(ex);
-				}
-				else {
-					compressDeferred.resolve(true);
-				}
-			});
-			yield compressDeferred.promise;
-			throw new Task.Result(true);
-		}
-		log(LOG_DEBUG, "About to move");
-		this.status = TextCache_MOVING;
-		let moveDeferred = Promise.defer();
-		let move = function(self, x) {
+			let destination = new Instances.LocalFile(this.destinationPath);
+			yield Utils.makeDir(destination, Prefs.dirPermissions);
+			log(LOG_INFO, this.fileName + ": Move " + this.tmpFile.path + " to " + this.destinationFile);
 			let df = destination.clone();
-			df.append(self.destinationName);
-			OS.File.move(self.tmpFile.path, df.path).then(function() {
-				moveDeferred.resolve(true);
-			}, function(ex) {
-				if ((ex.unixErrno && ex.unixErrno == OS.Constants.libc.ENAMETOOLONG) || (ex.winLastError && ex.winLastError == 3)) {
-					try {
-						self.shortenName();
-					}
-					catch (iex) {
-						log(LOG_ERROR, "Failed to shorten name", ex);
-					}
-				}
-				x = x || 1;
-				if (x > 5) {
-					moveDeferred.reject(ex);
-					return;
-				}
-				setTimeoutOnlyFun(function() move(self, ++x), x * 250);
-			})
-		};
-		move(this);
-		yield moveDeferred.promise;
-		throw new Task.Result(true);
+			df.append(this.destinationName);
+			try {
+				yield OS.File.remove(df.path);
+			}
+			catch (ex) {
+				// no op
+			}
+			// move file
+			if (this.compression) {
+				this.status = TextCache_DECOMPRESSING;
+				yield new Promise(function(resolve, reject) {
+					new Decompressor(this, function(ex) {
+						if (ex) {
+							reject(ex);
+						}
+						else {
+							resolve(true);
+						}
+					});
+				}.bind(this));
+				return true;
+			}
+			yield new Promise(function(resolve, reject) {
+				let move = function(self, x) {
+					let df = destination.clone();
+					df.append(self.destinationName);
+					moveFile(self.tmpFile.path, df.path).then(function() {
+						resolve(true);
+					}, function(ex) {
+						if ((ex.unixErrno && ex.unixErrno == OS.Constants.libc.ENAMETOOLONG) || (ex.winLastError && ex.winLastError == 3)) {
+							try {
+								self.shortenName();
+								ConflictManager.unpin(pinned);
+								pinned = self.destinationFile;
+								ConflictManager.pin(pinned);
+							}
+							catch (iex) {
+								log(LOG_ERROR, "Failed to shorten name", ex);
+							}
+						}
+						log(LOG_ERROR, ex);
+						x = x || 1;
+						if (x > 5) {
+							log(LOG_ERROR, "shit hit the fan!");
+							reject(ex);
+							return;
+						}
+						setTimeoutOnlyFun(function() move(self, ++x), x * 250);
+					})
+				};
+				move(this);
+			}.bind(this));
+			return true;
+		}
+		finally {
+			ConflictManager.unpin(pinned);
+		}
+		return false;
 	},
 	handleMetalink: function() {
 		try {
@@ -1971,7 +1982,7 @@ QueueItem.prototype = {
 	verifyHash: function() {
 		this.setState(FINISHING);
 		this.status = TextCache_VERIFYING;
-		return Task.spawn((function() {
+		return Task.spawn((function*() {
 			let mismatches = yield Verificator.verify(
 				(yield OS.File.exists(this.tmpFile.path)) ? this.tmpFile.path : this.destinationFile,
 				this.hashCollection,
@@ -1982,28 +1993,26 @@ QueueItem.prototype = {
 			if (!mismatches) {
 				log(LOG_ERROR, "hash not computed");
 				Prompts.alert(window, _('error', ["Metalink"]), _('verificationfailed', [this.destinationFile]));
-				throw new Task.Result(true);
+				return true;
 			}
 			else if (mismatches.length) {
 				log(LOG_ERROR, "Mismatches: " + mismatches.toSource());
-				throw new Task.Result(yield this.verifyHashError(mismatches));
+				return (yield this.verifyHashError(mismatches));
 			}
-			throw new Task.Result(true);
+			return true;
 		}).bind(this));
 	},
 	verifyHashError: function(mismatches) {
 		let file = this.destinationLocalFile;
 
-		return Task.spawn((function() {
-			function deleteFile() {
-				return Task.spawn(function() {
-					try {
-						yield OS.file.remove(file.path);
-					}
-					catch (ex if ex.becauseNoSuchFile) {
-						// no op
-					}
-				});
+		return Task.spawn((function*() {
+			function* deleteFile() {
+				try {
+					yield OS.File.remove(file.path);
+				}
+				catch (ex if ex.becauseNoSuchFile) {
+					// no op
+				}
 			}
 
 			function recoverPartials(download) {
@@ -2047,13 +2056,13 @@ QueueItem.prototype = {
 					case 0:
 						yield deleteFile();
 						recoverPartials(this, mismatches);
-						throw new Task.Result(false);
+						return false;
 					case 1:
 						yield deleteFile();
 						this.cancel();
-						throw new Task.Result(false);
+						return false;
 				}
-				throw new Task.Result(true);
+				return true;
 			}
 			let act = Prompts.confirm(
 				window,
@@ -2066,89 +2075,103 @@ QueueItem.prototype = {
 				case 0:
 					yield deleteFile();
 					this.safeRetry();
-					throw new Task.Result(false);
+					return false;
 				case 1:
 					yield deleteFile();
 					this.cancel();
-					throw new Task.Result(false);
+					return false;
 			}
-			throw new Task.Result(true);
+			return true;
 		}).bind(this));
 	},
 	customFinishEvent: function() {
 		new CustomEvent(this, Prefs.finishEvent);
 	},
-	setAttributes: function() {
-		return Task.spawn((function() {
-			if (Prefs.setTime) {
-				// XXX: async API <https://bugzilla.mozilla.org/show_bug.cgi?id=924916>
+	setAttributes: function*() {
+		if (Prefs.setTime) {
+			// XXX: async API <https://bugzilla.mozilla.org/show_bug.cgi?id=924916>
+			try {
+				let time = this.startDate.getTime();
 				try {
-					let time = this.startDate.getTime();
-					try {
-						time = this.visitors.time;
-					}
-					catch (ex) {
-						log(LOG_DEBUG, "no visitors time", ex);
-					}
-					// small validation. Around epoche? More than a month in future?
-					if (time < 2 || time > Date.now() + 30 * 86400000) {
-						throw new Exception("invalid date encountered: " + time + ", will not set it");
-					}
-					// have to unwrap
-					this.destinationLocalFile.lastModifiedTime = time;
+					time = this.visitors.time;
 				}
 				catch (ex) {
-					log(LOG_ERROR, "Setting timestamp on file failed: ", ex);
+					log(LOG_DEBUG, "no visitors time", ex);
 				}
-			}
-			let file = null;
-			if (!this.isOf(COMPLETE | FINISHING)) {
-				file = this._tmpFile || null;
-			}
-			else {
-				file = this.destinationLocalFile;
-			}
-			try {
-				this.totalSize = this.partialSize = (yield OS.File.stat(file.path)).size;
+				// small validation. Around epoche? More than a month in future?
+				if (time < 2 || time > Date.now() + 30 * 86400000) {
+					throw new Exception("invalid date encountered: " + time + ", will not set it");
+				}
+				// have to unwrap
+				this.destinationLocalFile.lastModifiedTime = time;
 			}
 			catch (ex) {
-				log(LOG_ERROR, "failed to get filesize for " + file.path, ex);
-				this.totalSize = this.partialSize = 0;
+				log(LOG_ERROR, "Setting timestamp on file failed: ", ex);
 			}
-			++Dialog.completed;
-		}).bind(this));
+		}
+		let file = null;
+		if (!this.isOf(COMPLETE | FINISHING)) {
+			file = this._tmpFile || null;
+		}
+		else {
+			file = this.destinationLocalFile;
+		}
+		try {
+			this.totalSize = this.partialSize = (yield OS.File.stat(file.path)).size;
+		}
+		catch (ex) {
+			log(LOG_ERROR, "failed to get filesize for " + file.path, ex);
+			this.totalSize = this.partialSize = 0;
+		}
+		return true;
+	},
+	closeChunks: function*() {
+		if (!this.chunks) {
+			return;
+		}
+		for (let c of this.chunks) {
+			yield c.close();
+		}
 	},
 	finishDownload: function(exception) {
-		if (!this.chunksReady(this.finishDownload.bind(this, exception))) {
+		if (this._finishDownloadTask) {
 			return;
 		}
 		log(LOG_DEBUG, "finishDownload, connections: " + this.sessionConnections);
-		Task.spawn((function finishDownloadTask() {
-			if (this.hashCollection && !(yield this.verifyHash())) {
-				return;
+		this._finishDownloadTask = Task.spawn(function* finishDownloadTask() {
+			try {
+				yield this.closeChunks();
+				if (this.hashCollection && !(yield this.verifyHash())) {
+					return;
+				}
+				if ("isMetalink" in this) {
+					this.handleMetalink();
+					return;
+				}
+				if (!(yield this.moveCompleted())) {
+					log(LOG_DEBUG, "moveCompleted scheduled!");
+					return;
+				}
+				yield this.setAttributes();
+				if (Prefs.finishEvent) {
+					this.customFinishEvent();
+				}
+				this.chunks.length = 0;
+				this.speeds.clear();
+				this.activeChunks = 0;
+				this.setState(COMPLETE);
+				this.status = TextCache_COMPLETE;
+				this.visitors = new VisitorManager();
+				this.compression = null;
 			}
-			if ("isMetalink" in this) {
-				this.handleMetalink();
-				return;
+			catch (ex) {
+				log(LOG_ERROR, "complete: ", ex);
+				this.fail(_("accesserror"), _("accesserror.long"), _("accesserror"));
 			}
-			if (!(yield this.moveCompleted())) {
-				return;
+			finally {
+				delete this._finishDownloadTask;
 			}
-			yield this.setAttributes();
-			if (Prefs.finishEvent) {
-				this.customFinishEvent();
-			}
-			this.chunks.length = 0;
-			this.speeds.clear();
-			this.activeChunks = 0;
-			this.setState(COMPLETE);
-			this.status = TextCache_COMPLETE;
-			this.visitors = new VisitorManager();
-			this.compression = null;
-		}).bind(this)).then(null, (function finishDownloadFailure(ex) {
-			log(LOG_ERROR, "complete: ", ex);
-			this.fail(_("accesserror"), _("accesserror.long"), _("accesserror"));
-		}).bind(this));
+		}.bind(this));
 	},
 	get maskURL() this.urlManager.usableURL,
 	get maskCURL() Utils.getCURL(this.maskURL),
@@ -2198,7 +2221,7 @@ QueueItem.prototype = {
 		this._icon = null;
 	},
 	resolveConflicts: function() {
-		ConflictManager.resolve(this);
+		return ConflictManager.resolve(this);
 	},
 	checkSpace: function(required) {
 		// Do not check for small files < 16M
@@ -2260,42 +2283,10 @@ QueueItem.prototype = {
 		}
 	},
 
-	_openChunks: 0,
-	chunkOpened: function() {
-		this._openChunks++;
-		log(LOG_DEBUG, "chunkOpened: " + this._openChunks);
-	},
-	chunkClosed: function() {
-		this._openChunks--;
-		log(LOG_DEBUG, "chunkClosed: " + this._openChunks);
-		this.refreshPartialSize();
-		this.invalidate();
-		if (!this._openChunks && this._chunksReady_next) {
-			log(LOG_DEBUG, "Running chunksReady_next");
-			let fn = this._chunksReady_next;
-			delete this._chunksReady_next;
-			fn();
-		}
-		if (!this._openChunks) {
-			this.save();
-		}
-	},
-	chunksReady: function(nextEvent) {
-		if (!this._openChunks) {
-			return true;
-		}
-		this._chunksReady_next = nextEvent;
-		log(LOG_DEBUG, "chunksReady: reschedule");
-		return false;
-	},
-
 	cancel: function(message) {
 		try {
 			const state = this.state;
-			if (state === COMPLETE) {
-				Dialog.completed--;
-			}
-			else if (state === RUNNING) {
+			if (state === RUNNING) {
 				if (this.chunks) {
 					// must set state here, already, to avoid confusing the connections
 					this.setState(CANCELED);
@@ -2308,42 +2299,42 @@ QueueItem.prototype = {
 				this.activeChunks = 0;
 			}
 			this.setState(CANCELED);
-			let bound = this.cancel.bind(this, message);
-			if (!this.chunksReady(bound)) {
-				log(LOG_INFO, this.fileName + ": cancel delayed (chunks)");
-				return;
-			}
-			if (this._preallocTask) {
-				log(LOG_INFO, this.fileName + ": cancel delayed (prealloc)");
-				this._preallocTask.then(bound, bound);
-				return;
-			}
-			log(LOG_INFO, this.fileName + ": canceled");
+			Task.spawn(function*() {
+				try {
+					yield this.closeChunks();
+					if (this._preallocTask) {
+						yield this._preallocTask;
+					}
+					log(LOG_INFO, this.fileName + ": canceled");
 
-			this.shutdown();
+					this.shutdown();
+					this.removeTmpFile();
 
-			this.removeTmpFile();
+					// gc
+					if (this.deleting) {
+						return;
+					}
+					if (!message) {
+						message = _("canceled");
+					}
 
-			// gc
-			if (this.deleting) {
-				return;
-			}
-			if (!message) {
-				message = _("canceled");
-			}
-
-			this.status = message;
-			this.visitors = new VisitorManager();
-			this.chunks.length = 0;
-			this.progress = this.totalSize = this.partialSize = 0;
-			this.conflicts = 0;
-			this.resumable = true;
-			this._maxChunks = this._activeChunks = 0;
-			this._autoRetries = 0;
-			delete this._autoRetryTime;
-			this.speeds.clear();
-			this.otherBytes = 0;
-			this.save();
+					this.status = message;
+					this.visitors = new VisitorManager();
+					this.chunks.length = 0;
+					this.progress = this.totalSize = this.partialSize = 0;
+					this.conflicts = 0;
+					this.resumable = true;
+					this._maxChunks = this._activeChunks = 0;
+					this._autoRetries = 0;
+					delete this._autoRetryTime;
+					this.speeds.clear();
+					this.otherBytes = 0;
+					this.save();
+				}
+				catch (ex) {
+					log(LOG_ERROR, "cancel() Task", ex);
+				}
+			}.bind(this));
 		}
 		catch(ex) {
 			log(LOG_ERROR, "cancel():", ex);
@@ -2351,15 +2342,18 @@ QueueItem.prototype = {
 	},
 
 	cleanup: function() {
-		delete this.visitors;
-		delete this.chunks;
-		delete this.speeds;
-		delete this.urlManager;
-		delete this.referrer;
-		delete this._referrerUrlManager;
-		delete this._destinationLocalFile;
-		delete this._tmpFile;
-		delete this.rebuildDestination_renamer;
+		Task.spawn(function*() {
+			this.chunks && (yield this.closeChunks());
+			delete this.visitors;
+			delete this.chunks;
+			delete this.speeds;
+			delete this.urlManager;
+			delete this.referrer;
+			delete this._referrerUrlManager;
+			delete this._destinationLocalFile;
+			delete this._tmpFile;
+			delete this.rebuildDestination_renamer;
+		}.bind(this));
 	},
 	prealloc: function() {
 		let file = this.tmpFile;
@@ -2378,43 +2372,44 @@ QueueItem.prototype = {
 		}
 
 		this.preallocating = true;
-		this._preallocTask = Task.spawn((function() {
+		this._preallocTask = Task.spawn(function*() {
 			try {
-				yield Utils.makeDir(file.parent, Prefs.dirPermissions);
-			}
-			catch (ex if ex.becauseExists) {
-				// no op
-			}
-			try {
-				if (this.totalSize === (yield OS.File.stat(file.path)).size) {
-					log(LOG_INFO, "pa: already allocated");
-					return;
+				try {
+					yield Utils.makeDir(file.parent, Prefs.dirPermissions);
+				}
+				catch (ex if ex.becauseExists) {
+					// no op
+				}
+				try {
+					if (this.totalSize === (yield OS.File.stat(file.path)).size) {
+						log(LOG_INFO, "pa: already allocated");
+						return;
+					}
+				}
+				catch (ex if ex.becauseNoSuchFile) {
+					// no op
+				}
+				let pa = Preallocator.prealloc(
+					file,
+					this.totalSize,
+					Prefs.permissions,
+					Prefs.sparseFiles
+					);
+				if (pa) {
+					yield pa;
+					log(LOG_INFO, "pa: done");
+				}
+				else {
+					log(LOG_INFO, "pa: not preallocating");
 				}
 			}
-			catch (ex if ex.becauseNoSuchFile) {
-				// no op
-			}
-			let pa = Preallocator.prealloc(
-				file,
-				this.totalSize,
-				Prefs.permissions,
-				Prefs.sparseFiles
-				);
-			if (pa) {
-				yield pa;
-				log(LOG_INFO, "pa: done");
-			}
-			else {
-				log(LOG_INFO, "pa: not preallocating");
+			catch(ex) {
+				log(LOG_ERROR, "pa: failed", ex);
 			}
 			this._preallocTask = null;
 			this.preallocating = false;
 			this.maybeResumeDownload();
-		}).bind(this)).then(null, (function(ex) {
-			this._preallocTask = null;
-			this.preallocating = false;
-			log(LOG_ERROR, "pa: Failed to prealloc", ex);
-		}).bind(this));
+		}.bind(this));
 	},
 
 	shutdown: function() {
@@ -2426,7 +2421,7 @@ QueueItem.prototype = {
 		if (!tmpFile) {
 			return;
 		}
-		Task.spawn(function() {
+		Task.spawn(function*() {
 			try {
 				yield OS.File.remove(tmpFile.path);
 			} catch (ex if ex.becauseNoSuchFile) {
@@ -2444,10 +2439,11 @@ QueueItem.prototype = {
 		return !!this._autoRetryTime;
 	},
 	pauseAndRetry: function() {
+		let retry = this.state == RUNNING;
 		this.pause();
 		this.resumable = true;
 
-		if (Prefs.autoRetryInterval && !(Prefs.maxAutoRetries && Prefs.maxAutoRetries <= this._autoRetries)) {
+		if (retry && Prefs.autoRetryInterval && !(Prefs.maxAutoRetries && Prefs.maxAutoRetries <= this._autoRetries)) {
 			Dialog.markAutoRetry(this);
 			this._autoRetryTime = Utils.getTimestamp();
 			log(LOG_INFO, "marked auto-retry: " + this);
@@ -2538,7 +2534,8 @@ QueueItem.prototype = {
 
 				// restart paused chunks
 				if (paused.length) {
-					downloadChunk(this, paused.shift());
+					let p = paused.shift();
+					downloadChunk(this, p, p.end === 0);
 					rv = true;
 					continue;
 				}
@@ -2663,84 +2660,120 @@ XPCOMUtils.defineLazyGetter(QueueItem.prototype, 'AuthPrompts', function() {
 	return new LoggedPrompter(window);
 });
 
-const ConflictManager = {
-	_items: [],
+var ConflictManager = {
+	_items: new Map(),
+	_queue: [],
+	_pinned: new Set(),
 	resolve: function(download) {
-		if (this._processing && this._processing.download === download) {
-			return this._processing.deferred.promise;
+		log(LOG_DEBUG, "Resolving " + download);
+		let promise = this._items.get(download);
+		if (promise) {
+			log(LOG_DEBUG, "Resolving already " + promise);
+			return promise.promise;
 		}
-		for (let i of this._items) {
-			if (i.download == download) {
-				return i.deferred.promise;
-			}
-		}
-		let deferred = Promise.defer();
-		this._items.push({download: download, deferred: deferred});
-		this._process();
-		return deferred.promise;
+		promise = {};
+		promise.promise = new Promise(function(resolve, reject) {
+			promise.reject = reject;
+			promise.resolve = resolve;
+		});
+		this._items.set(download, promise);
+		this._queue.push(download);
+		log(LOG_DEBUG, "Resolving new " + promise);
+		this._processNext();
+		return promise.promise;
 	},
-	_process: function() {
+	pin: function(name) {
+		this._pinned.add(name);
+	},
+	unpin: function(name) {
+		this._pinned.delete(name);
+	},
+	_processNext: function() {
+		log(LOG_DEBUG, "Resolving next");
 		if (this._processing) {
+			log(LOG_DEBUG, "Resolving rescheduling");
 			return;
 		}
-		let item = this._items.shift();
-		if (!item) {
+		let download = this._queue.shift();
+		if (!download) {
 			return;
 		}
-		this._processing = item;
-		Task.spawn(this._processOne.bind(this, item.download, item.deferred)).then((function() {
-			log(LOG_ERROR, "Resolved " + item.download);
-			delete this._processing;
-			this._process();
-		}).bind(this), (function(ex) {
-			log(LOG_ERROR, "Failed to resolve conflicts", ex);
-			item.deferred.reject(ex);
-			delete this._processing;
-			this._process();
-		}).bind(this));
+		let p = this._items.get(download);
+		this._items.delete(download);
+
+		this._processing = true;
+		Task.spawn(function*() {
+			try {
+				p.resolve(yield this._processOne(download));
+			}
+			catch (ex) {
+				log(LOG_ERROR, "Failed to resolve", ex);
+				p.reject(ex);
+			}
+			finally {
+				this._processing = false;
+				setTimeoutOnlyFun(this._processNext.bind(this), 0);
+			}
+		}.bind(this));
 	},
-	_processOne: function(download, deferred) {
+	_processOne: function*(download) {
+		log(LOG_DEBUG, "Starting conflict resolution for " + download);
 		let dest = download.destinationLocalFile;
-		if (!Dialog.checkSameName(download, download.destinationFile) && !(yield OS.File.exists(dest.path))) {
-			deferred.resolve(true);
-			return;
+		let exists = this._pinned.has(this.destinationFile);
+		if (!exists) {
+			exists = yield OS.File.exists(dest.path);
+		}
+		if (!exists) {
+			log(LOG_DEBUG, "Does not exist " + download);
+			return true;
 		}
 
 		let cr = -1;
-		if (Prefs.conflictResolution !== 3) {
-			cr = Prefs.conflictResolution;
-		}
-		if ('_sessionSetting' in this) {
-			cr = this._sessionSetting;
-		}
-		if (download.shouldOverwrite) {
-			cr = 1;
-		}
 
 		let conflicts = download.conflicts || 0;
 		let basename = download.destinationName;
 		let newDest = download.destinationLocalFile.clone();
-		for (;; ++conflicts) {
-			newDest.leafName = Utils.formatConflictName(basename, conflicts);
-			if (!(yield OS.File.exists(newDest.path))) {
-				break;
-			}
+
+		if (Prefs.conflictResolution !== 3) {
+			cr = Prefs.conflictResolution;
 		}
+		else if (download.shouldOverwrite) {
+			cr = 1;
+		}
+		else if ('_sessionSetting' in this) {
+			cr = this._sessionSetting;
+		}
+
 		if (cr < 0) {
-			let choice = Promise.defer();
+			let dialog = {};
+			dialog.promise = new Promise(function(resolve, reject) {
+				dialog.resolve = resolve;
+				dialog.reject = reject;
+			});
+			for (;; ++conflicts) {
+				newDest.leafName = Utils.formatConflictName(basename, conflicts);
+				exists = this._pinned.has(newDest.path);
+				if (!exists) {
+					exists = yield OS.File.exists(newDest.path);
+				}
+				if (!exists) {
+					break;
+				}
+			}
 			let options = {
 				url: Utils.cropCenter(download.urlManager.usable, 45),
-				fn: Utils.cropCenter(download.destinationName, 45),
+				fn: Utils.cropCenter(newDest.leafName, 45),
 				newDest: Utils.cropCenter(newDest.leafName, 45)
 			};
 			window.openDialog(
 				"chrome://dta/content/dta/manager/conflicts.xul",
 				"_blank",
 				"chrome,centerscreen,resizable=no,dialog,close=no,dependent",
-				options, choice
+				options, dialog
 				);
 			let ctype = 0;
-			[cr, ctype] = yield choice.promise;
+			[cr, ctype] = yield dialog.promise;
+
 			if (ctype === 1) {
 				this._sessionSetting = cr;
 			}
@@ -2748,25 +2781,27 @@ const ConflictManager = {
 				Preferences.setExt('conflictresolution', cr);
 			}
 		}
+
 		switch (cr) {
 			case 0:
 				for (;; ++conflicts) {
 					newDest.leafName = Utils.formatConflictName(basename, conflicts);
-					if (!(yield OS.File.exists(newDest.path))) {
+					exists = this._pinned.has(newDest.path);
+					if (!exists) {
+						exists = yield OS.File.exists(newDest.path);
+					}
+					if (!exists) {
 						break;
 					}
 				}
 				download.conflicts = conflicts;
-				deferred.resolve(true);
-				break;
+				return true;
 			case 1:
 				download.shouldOverwrite = true;
-				deferred.resolve(true);
-				break;
+				return true;
 			default:
 				download.cancel(_('skipped'));
-				deferred.resolve(false);
-				break;
+				return false;
 		}
 	}
 };
@@ -2809,7 +2844,7 @@ function CustomEvent(download, command) {
 	download.complete();
 }
 
-const startDownloads = (function() {
+var startDownloads = (function() {
 	const series = {};
 	lazy(series, "num", function() {
 		let rv = DTA.currentSeries();

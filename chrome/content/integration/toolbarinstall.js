@@ -3,7 +3,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 "use strict";
 
-const all = ['dta-button', 'dta-turbo-button', 'dta-turboselect-button', 'dta-manager-button'];
+var all = ['dta-button', 'dta-turbo-button', 'dta-turboselect-button', 'dta-manager-button'];
 
 function $(id) document.getElementById(id);
 function $o(id) opener.document.getElementById(id);
@@ -43,8 +43,8 @@ addEventListener("dialogaccept", function accept() {
 				if (!placement) {
 					// New and not placed yet
 					placement = {area: 'nav-bar', position: undefined};
-					opener.CustomizableUI.addWidgetToArea(id, placement.area, placement.position);
-					opener.CustomizableUI.ensureWidgetPlacedInWindow(id, opener);
+					opener.CustomizableUI.addWidgetToArea(b, placement.area, placement.position);
+					opener.CustomizableUI.ensureWidgetPlacedInWindow(b, opener);
 				}
 			}
 		}

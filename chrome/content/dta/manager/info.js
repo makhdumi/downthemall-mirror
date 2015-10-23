@@ -6,9 +6,9 @@
 /* global COMPLETE, FINISHING */
 /* jshint browser:true */
 
-const {defer} = require("support/defer");
-const {TimerManager} = require("support/timers");
-const Timers = new TimerManager();
+var {defer} = require("support/defer");
+var {TimerManager} = require("support/timers");
+var Timers = new TimerManager();
 
 function discard() {
 	if (opener) {
@@ -41,7 +41,8 @@ var Dialog = {
 				$("infoDest").value = d.destinationFile;
 				$("infoDate").value = d.startDate.toLocaleString();
 				$("infoPrivate").hidden = !d.isPrivate;
-				$("mirrorsText").value = _("mirrorsText", [d.urlManager.length]);
+				$("mirrorsText").value = _("mirrorsText.2", [d.urlManager.length], d.urlManager.length);
+				$("clearReferrer").hidden = true;
 				document.title = d.destinationName;
 
 				if (d.referrer) {
@@ -84,9 +85,9 @@ var Dialog = {
 					this.downloads.every(function(e) e.pathName === dir) ?
 					dir :
 					"";
-				$('tabs').selectedIndex = 2;
-				$('canvasTab').hidden = true;
-				$('canvasBox').hidden = true;
+				$('canvasTab').parentElement.removeChild($('canvasTab'));
+				$('canvasBox').parentElement.removeChild($('canvasBox'));
+				$('tabs').selectedIndex = 0;
 			}
 			if (this.downloads.every(function(d) { return d.isOf(COMPLETE | FINISHING); })) {
 				for (let e of $('directory', 'renaming', 'mask', 'browsedir')) {
@@ -106,6 +107,13 @@ var Dialog = {
 			addEventListener("resize", function() Dialog.resize(), true);
 		}, 0);
 	},
+	clearReferrer: function() {
+		var sp = $("sourcePage");
+		sp.removeAttribute("readonly");
+		sp.disabled = false;
+		sp.value = "";
+		sp.focus();
+	},
 	accept: function() {
 		if (this.isFullyDisabled) {
 			return true;
@@ -124,13 +132,12 @@ var Dialog = {
 		mask = mask || '';
 		$('renaming').value = mask;
 
-		let description = $('description').value;
-		description = description.length ? description : '';
+		let description = $('description').value || "";
 
 		let sp = $('sourcePage');
 		let newRef = null;
 		if (!sp.hasAttribute('readonly') && sp._value !== sp.value) {
-			newRef = sp.value;
+			newRef = sp.value || "";
 		}
 
 		if (this.downloads.length === 1) {
@@ -164,9 +171,9 @@ var Dialog = {
 			if (description) {
 				d.description = description;
 			}
-			if (newRef) {
+			if (newRef !== null) {
 				try {
-					d.referrer = toURL(newRef);
+					d.referrer = newRef ? toURL(newRef) : null;
 					delete d._referrerUrlManager;
 				}
 				catch (ex) {
@@ -209,7 +216,7 @@ var Dialog = {
 		);
 		if (mirrors.length) {
 			download.replaceMirrors(mirrors);
-			$("mirrorsText").value = _("mirrorsText", [download.urlManager.length]);
+			$("mirrorsText").value = _("mirrorsText.2", [download.urlManager.length], download.urlManager.length);
 			log(LOG_INFO, "New mirrors set " + mirrors);
 		}
 	},

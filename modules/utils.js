@@ -7,6 +7,7 @@ const Prefs = require("preferences");
 const {toURI} = require("support/stringfuncs");
 const {identity} = require("support/memoize");
 const {OS} = requireJSM("resource://gre/modules/osfile.jsm");
+const {PluralForm} = requireJSM("resource://gre/modules/PluralForm.jsm");
 
 /**
  * XUL namespace
@@ -594,8 +595,11 @@ StringBundles._repl = function() {
 };
 StringBundles.prototype = Object.freeze({
 	getString: function(id) this._strings[id],
-	getFormattedString: function(id, params) {
+	getFormattedString: function(id, params, num) {
 		let fmt = this.getString(id);
+		if (isFinite(num)) {
+			fmt = PluralForm.get(num, fmt);
+		}
 		StringBundles_params = params;
 		try {
 			fmt = fmt.replace(StringBundles._br, StringBundles._repl);
@@ -603,7 +607,7 @@ StringBundles.prototype = Object.freeze({
 		finally {
 			StringBundles_params = null;
 		}
-		return identity(fmt);
+		return fmt;
 	}
 });
 const StringBundles_Observer = {
@@ -700,7 +704,12 @@ exports.normalizeMetaPrefs = function(urls) {
 	});
 };
 
+const makeDirCache = new LRUMap(10);
+
 exports.makeDir = function(dir, perms) {
+	if (makeDirCache.has(dir.path)) {
+		return;
+	}
 	try {
 		yield OS.File.makeDir(dir.path, {unixMode: perms});
 	}
@@ -711,4 +720,9 @@ exports.makeDir = function(dir, perms) {
 		yield exports.makeDir(dir.parent, perms);
 		yield exports.makeDir(dir, perms);
 	}
+	catch (ex if ex.winLastError == 3) {
+		yield exports.makeDir(dir.parent, perms);
+		yield exports.makeDir(dir, perms);
+	}
+	makeDirCache.set(dir.path, perms);
 };

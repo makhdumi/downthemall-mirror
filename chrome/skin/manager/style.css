@@ -312,7 +312,8 @@ tooltip textbox.plain {
 	width: 100%;
 	font-size: 14px;
 	font-weight: bold;
-	color: black !important;
+	text-shadow: 1px 1px 0px #d7ff85 !important;
+	color: #252525 !important;
 }
 #infoDest {
 	font-weight: bold !important;
@@ -395,7 +396,7 @@ treechildren::-moz-tree-cell-text(private) {
 	treechildren::-moz-tree-image(iconic) {
 		list-style-image: url(icons@2x.png);
 		-moz-image-region: rect(32px,96px,64px,64px);
-		width: 16px;
+		width: 16px !important;
 	}
 	treechildren::-moz-tree-image(iconic,progress) {
 		-moz-image-region: rect(32px,96px,64px,64px);
@@ -508,7 +509,7 @@ treechildren::-moz-tree-cell-text(private) {
 	-moz-image-region: rect(0px,64px,16px,48px);
 }
 .cancel[disabled="true"] {
-	-moz-image-region: rect(16px,112px,32px,96px);
+	-moz-image-region: rect(16px,64px,32px,48px);
 }
 
 #speedLimit {
@@ -718,7 +719,7 @@ toolbarbutton.listselectinv, menuitem#listselectinv {
 		-moz-image-region: rect(0px,128px,32px,96px);
 	}
 	.cancel[disabled="true"] {
-		-moz-image-region: rect(32px,228px,64px,192px);
+		-moz-image-region: rect(32px,128px,64px,96px);
 	}
 
 	#speedLimit {

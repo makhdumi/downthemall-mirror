@@ -4,8 +4,8 @@
 "use strict";
 
 const {URL} = require("api");
-const {memoize} = require("support/memoize");
-const {getExtension, toURL} = require("support/stringfuncs");
+const {memoize} = require("./memoize");
+const {getExtension, toURL} = require("./stringfuncs");
 
 const favCache = new LRUMap(200);
 
@@ -131,7 +131,7 @@ const getIcon = exports.getIcon = function(link, metalink, size) {
 			url = link.url.spec;
 		}
 		let ext = getExtension(url);
-		return "moz-icon://file" + (ext ? '.' + ext : '') + "?size=" + size;
+		return "moz-icon://file" + (ext ? '.' + ext.toLowerCase() : '') + "?size=" + size;
 	}
 	catch (ex) {
 		log(LOG_ERROR, "updateIcon: failed to grab icon", ex);

@@ -40,6 +40,34 @@ const _ = (function(global) {
 	};
 })(this);
 
+let proxyInfo = null;
+const proxyObserver = {
+	observe: function() {
+		let type = Preferences.getExt("proxy.type", "");
+		let host = Preferences.getExt("proxy.host", "");
+		let port = Preferences.getExt("proxy.port", 0);
+		let resolve = Preferences.getExt("proxy.resolve", true);
+		if (!type || !host || !port) {
+			log(LOG_DEBUG, "no proxy info");
+			proxyInfo = null;
+			return;
+		}
+		try {
+			let flags = 0;
+			if (resolve) {
+				flags |= Ci.nsIProxyInfo.TRANSPARENT_PROXY_RESOLVES_HOST;
+			}
+			proxyInfo = Services.pps.newProxyInfo(type, host, port, flags, 0xffffffff, null);
+			log(LOG_DEBUG, "created proxy info");
+		}
+		catch (ex) {
+			log(LOG_ERROR, "Failed to create proxy info", ex);
+			proxyInfo = null;
+		}
+	}
+};
+Preferences.addObserver("extensions.dta.proxy", proxyObserver);
+proxyObserver.observe();
 
 function Connection(d, c, isInfoGetter) {
 
@@ -53,7 +81,24 @@ function Connection(d, c, isInfoGetter) {
 	let referrer = d.referrer;
 	log(LOG_INFO, "starting: " + url.spec);
 
-	this._chan = Services.io.newChannelFromURI(url);
+	try {
+		if (proxyInfo) {
+			let handler = Services.io.getProtocolHandler(url.scheme);
+			if (handler instanceof Ci.nsIProxiedProtocolHandler) {
+				this._chan = handler.newProxiedChannel(url, proxyInfo, 0, null);
+			}
+			else {
+				this._chan = handler.newChannel(url);
+			}
+		}
+		else {
+			this._chan = Services.io.newChannelFromURI(url);
+		}
+	}
+	catch (ex) {
+		log(LOG_ERROR, "Failed to construct a channel the hard way!");
+		this._chan = Services.io.newChannelFromURI(url);
+	}
 	let r = Ci.nsIRequest;
 	let loadFlags = r.LOAD_NORMAL;
 	if (!Preferences.getExt('useCache', false)) {
@@ -348,6 +393,28 @@ Connection.prototype = {
 		return true;
 	},
 
+	discard: function(aInputStream, count) {
+		if (aInputStream instanceof Ci.nsISeekableStream) {
+			try {
+				aInputStream.seek(Ci.nsISeekableStream.NS_SEEK_END, 0);
+				return;
+			}
+			catch (ex) {
+				// no op
+			}
+		}
+		try {
+			if (count) {
+				new Instances.BinaryInputStream(aInputStream).
+					readArrayBuffer(count, new ArrayBuffer(count));
+			}
+		}
+		catch (ex) {
+			log(LOG_ERROR, "Failed to discard overrecv by conventional means " + count + " " + aInputStream.available(), ex);
+			throw NS_ERROR_BINDING_ABORTED;
+		}
+	},
+
 	// nsIStreamListener
 	onDataAvailable: function(aRequest, aContext, aInputStream, aOffset, aCount) {
 		if (this._closed) {
@@ -357,24 +424,35 @@ Connection.prototype = {
 			// we want to kill ftp chans as well which do not seem to respond to
 			// cancel correctly.
 			let c = this.c;
-			if (c.write(aRequest, aInputStream, aCount) < 0) {
+			let written = c.write(aRequest, aInputStream, aCount);
+			if (written < 0) {
 				// need to attempt another write after merging in verifyChunksStarted
-				if (this.verifyChunksStarted() &&
-						c.write(aRequest, aInputStream, aCount) >= 0) {
-					return;
+				if (this.verifyChunksStarted()) {
+					written = c.write(aRequest, aInputStream, aCount);
 				}
-
+			}
+			if (written < 0) {
 				// we already got what we wanted
-				this.cancel();
+				try {
+					this.discard(aInputStream, aCount);
+				}
+				finally {
+					this.cancel();
+				}
+				return;
+			}
+			if (aCount - written > 0) {
+				this.discard(aInputStream, aCount - written);
 			}
 		}
-		catch (ex) {
+		catch (ex if (ex !== NS_ERROR_BINDING_ABORTED && ex.result !== NS_ERROR_BINDING_ABORTED)) {
 			log(LOG_ERROR, 'onDataAvailable', ex);
 			this.writeFailed();
 		}
 	},
 
 	writeFailed: function() {
+		log(LOG_DEBUG, "write failed invoked!");
 		let d = this.d;
 		d.fail(_("accesserror"), _("accesserror.long"), _("accesserror"));
 	},
@@ -781,7 +859,9 @@ Connection.prototype = {
 
 		if (visitor.fileName && visitor.fileName.length > 0) {
 			// if content disposition hasn't an extension we use extension of URL
-			let newName = getUsableFileNameWithFlatten(visitor.fileName.replace(/\\/g, ''));
+			log(LOG_DEBUG, "raw file name " + visitor.fileName);
+			let newName = getUsableFileNameWithFlatten(visitor.fileName.replace(/\\|\?/g, '_'));
+			log(LOG_DEBUG, "new file name " + newName);
 			let ext = getExtension(this.url.usable);
 			if (!~visitor.fileName.lastIndexOf('.') && ext) {
 				newName += ('.' + ext);
@@ -1003,16 +1083,7 @@ Connection.prototype = {
 				--d.maxChunks;
 			}
 
-			// check if we're complete now
 			const isRunning = d.state === RUNNING;
-			if (isRunning && d.chunks.every(function(e) { return e.complete; })) {
-				if (!d.resumeDownload()) {
-					log(LOG_INFO, d + ": Download is complete!");
-					d.setState(FINISHING);
-					d.finishDownload();
-					return;
-				}
-			}
 
 			if (c.starter && ~DISCONNECTION_CODES.indexOf(aStatusCode)) {
 				if (!d.urlManager.markBad(this.url)) {
@@ -1044,7 +1115,7 @@ Connection.prototype = {
 
 			// rude way to determine disconnection: if connection is closed before
 			// download is started we assume a server error/disconnection
-			if (c.starter && isRunning) {
+			if (c.starter && isRunning && !c.written) {
 				if (!d.urlManager.markBad(this.url)) {
 					log(LOG_ERROR, d + ": Server error or disconnection", "(type 2)");
 					d.pauseAndRetry();
@@ -1068,6 +1139,15 @@ Connection.prototype = {
 					d.status = _("servererror");
 				}
 				return;
+			}
+
+			// check if we're complete now
+			if (isRunning && d.chunks.every(e => e.complete)) {
+				if (!d.resumeDownload()) {
+					log(LOG_INFO, d + ": Download is complete!");
+					d.finishDownload();
+					return;
+				}
 			}
 
 			// size mismatch
@@ -1095,13 +1175,13 @@ Connection.prototype = {
 				}
 				return;
 			}
+
 			if (!d.isOf(PAUSED | CANCELED)) {
 				d.resumeDownload();
 			}
 		}
 		finally {
 			delete this.c;
-			delete this.d;
 			delete this._chan;
 		}
 	},

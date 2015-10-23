@@ -3,14 +3,14 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 "use strict";
 /* global _, DTA, $, $$, Utils, Preferences */
-/* global DefaultDownloadsDirectory, unloadWindow, getIcon, getFavIcon */
+/* global getDefaultDownloadsDirectory, unloadWindow, getIcon, getFavIcon */
 /* global mapInSitu, setTimeoutOnlyFun, FilterManager, openUrl */
 /* jshint browser:true */
-const prompts = require("prompts");
+var prompts = require("prompts");
 
-const hidpi = window.matchMedia && window.matchMedia("(min-resolution: 2dppx)").matches;
+var hidpi = window.matchMedia && window.matchMedia("(min-resolution: 2dppx)").matches;
 
-let Dialog;
+var Dialog;
 
 /* tree helpers */
 function treeIconCallback(icon, async) {
@@ -234,25 +234,9 @@ Tree.prototype = {
 	performAction: function(action) {},
 	performActionOnRow: function(action, index, column) {},
 	performActionOnCell: function(action, index, column) {},
-	getColumnProperties_legacy: function(column, element, prop) {},
 	getColumnProperties: function(column, element) "",
 
-	getRowProperties_legacy: function(idx, prop) {
-		let l = this._links[idx];
-		// AppendElement will just accept nsIAtom.
-		// no documentation on devmo, xulplanet though :p
-		prop.AppendElement(this._atoms.getAtom(l.checked));
-	},
 	getRowProperties: function(idx) this._links[idx].checked,
-	getCellProperties_legacy: function(idx, column, prop) {
-		// col 1 is our url... it should display the type icon
-		// to better be able to style add a property.
-		if (column.index === 1) {
-			prop.AppendElement(this.iconicAtom);
-		}
-		let l = this._links[idx];
-		prop.AppendElement(this._atoms.getAtom(l.checked));
-	},
 	getCellProperties: function(idx, column) {
 		// col 1 is our url... it should display the type icon
 		// to better be able to style add a property.
@@ -286,11 +270,6 @@ Tree.prototype = {
 	}
 };
 requireJoined(Tree.prototype, "support/atoms");
-if (Components.interfacesByID["{C06DC4D3-63A2-4422-A0A3-5F2EDDECA8C1}"]) {
-	Tree.prototype.getCellProperties = Tree.prototype.getCellProperties_legacy;
-	Tree.prototype.getColumnProperties = Tree.prototype.getColumnProperties_legacy;
-	Tree.prototype.getRowProperties = Tree.prototype.getRowProperties_legacy;
-}
 
 /**
  * Our real, kicks ass implementation of the UI
@@ -327,7 +306,9 @@ Dialog = {
 
 			if (!this.ddDirectory.value) {
 				log(LOG_DEBUG, "Using default download directory, value was " + this.ddDirectory.value);
-				this.ddDirectory.value = DefaultDownloadsDirectory.path;
+				getDefaultDownloadsDirectory((function(path) {
+					this.ddDirectory.value = path;
+				}).bind(this));
 			}
 
 			// initialize the labels
@@ -347,18 +328,22 @@ Dialog = {
 
 			// changeTab will initialize the filters and do the selection for us
 			let preferredTab = Preferences.getExt("seltab", 0);
-			if (preferredTab) {
-				this.changeTab(!!images.length ? 'images' : 'links');
-			}
-			else {
-				this.changeTab(!!links.length ? 'links': 'images');
-			}
+			FilterManager.ready((function() {
+				if (preferredTab) {
+					this.changeTab(!!images.length ? 'images' : 'links');
+				}
+				else {
+					this.changeTab(!!links.length ? 'links': 'images');
+				}
+			}).bind(this));
 
 			$("urlList").addEventListener(
 				'keypress',
 				function(evt) {
 					if (evt.charCode === ' '.charCodeAt(0)) {
 						Dialog.toggleSelection();
+						evt.stopPropagation();
+						evt.preventDefault();
 					}
 				},
 				true

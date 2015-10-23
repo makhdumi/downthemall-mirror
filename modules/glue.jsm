@@ -3,7 +3,7 @@
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 "use strict";
 
-const EXPORTED_SYMBOLS = [
+var EXPORTED_SYMBOLS = [
 	"require",
 	"requireJoined",
 	"requireJSM",
@@ -18,7 +18,9 @@ const EXPORTED_SYMBOLS = [
 	"LRUMap"
 	];
 
-const {
+//This might be already defined... or not...
+
+var {
 	classes: Cc,
 	interfaces: Ci,
 	utils: Cu,
@@ -32,12 +34,12 @@ Cm.QueryInterface(Ci.nsIComponentRegistrar);
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://gre/modules/Services.jsm");
 
-const weak = Cu.getWeakReference.bind(Cu);
-const reportError = Cu.reportError.bind(Cu);
-const lazy = XPCOMUtils.defineLazyGetter; // bind?
-const QI = XPCOMUtils.generateQI.bind(XPCOMUtils);
+var weak = Cu.getWeakReference.bind(Cu);
+var reportError = Cu.reportError.bind(Cu);
+var lazy = XPCOMUtils.defineLazyGetter; // bind?
+var QI = XPCOMUtils.generateQI.bind(XPCOMUtils);
 
-const lazyProto = (function() {
+var lazyProto = (function() {
 	const gdesc = {enumerable: true};
 	const vdesc = {enumerable: true};
 	return function lazyProto(proto, name, fn) {
@@ -57,16 +59,16 @@ const lazyProto = (function() {
 	};
 })();
 
-let log = function logStub() {
+var log = function logStub() {
 	Cu.reportError(Array.join(arguments, ", "));
 };
-let LOG_DEBUG = 0, LOG_INFO = 0, LOG_ERROR = 0;
+var LOG_DEBUG = 0, LOG_INFO = 0, LOG_ERROR = 0;
 
-function LRUMap(limit) {
+var LRUMap = function LRUMap(limit) {
 	this._limit = limit;
 	this.clear();
 	Object.preventExtensions(this);
-}
+};
 LRUMap.prototype = Object.freeze({
 	"get": function(key) this._dict.get(key),
 	"has": function(key) this._dict.has(key),
@@ -125,6 +127,8 @@ LRUMap.prototype = Object.freeze({
 	dlsg("uuid", "@mozilla.org/uuid-generator;1", "nsIUUIDGenerator");
 	dlsg("wintaskbar", "@mozilla.org/windows-taskbar;1", "nsIWinTaskbar");
 	dlsg("clipboardhelper", "@mozilla.org/widget/clipboardhelper;1", "nsIClipboardHelper");
+	dlsg("pps", "@mozilla.org/network/protocol-proxy-service;1", "nsIProtocolProxyService");
+	dlsg("sysprincipal", "@mozilla.org/systemprincipal;1", "nsIPrincipal");
 
 	const Instances = exports.Instances = {};
 
@@ -132,7 +136,10 @@ LRUMap.prototype = Object.freeze({
 	itor("XHR", "@mozilla.org/xmlextras/xmlhttprequest;1", "nsIXMLHttpRequest");
 	itor("DOMSerializer", "@mozilla.org/xmlextras/xmlserializer;1", "nsIDOMSerializer");
 	itor("MimeInputStream", "@mozilla.org/network/mime-input-stream;1", "nsIMIMEInputStream");
+	itor("SupportsArray","@mozilla.org/supports-array;1", "nsISupportsArray");
 	itor("SupportsBool","@mozilla.org/supports-PRBool;1", "nsISupportsPRBool");
+	itor("SupportsInt32","@mozilla.org/supports-PRInt32;1", "nsISupportsPRInt32");
+	itor("SupportsInterfacePointer","@mozilla.org/supports-interface-pointer;1", "nsISupportsInterfacePointer");
 	itor("SupportsString","@mozilla.org/supports-string;1", "nsISupportsString");
 	itor("SupportsUint32","@mozilla.org/supports-PRUint32;1", "nsISupportsPRUint32");
 	itor("Transferable", "@mozilla.org/widget/transferable;1", "nsITransferable");
@@ -161,15 +168,15 @@ LRUMap.prototype = Object.freeze({
 	itor("ZipReader", "@mozilla.org/libjar/zip-reader;1", "nsIZipReader", "open");
 
 	const {SELF_PATH, BASE_PATH} = (function() {
-	let rv;
-	try { throw new Error("narf"); }
-	catch (ex) {
-		rv = {
-			SELF_PATH: ex.fileName,
-			BASE_PATH: /^(.+\/).*?$/.exec(ex.fileName)[1]
-		};
-	}
-	return rv;
+		let rv;
+		try { throw new Error("narf"); }
+		catch (ex) {
+			rv = {
+				SELF_PATH: ex.fileName,
+				BASE_PATH: /^(.+\/).*?$/.exec(ex.fileName)[1]
+			};
+		}
+		return rv;
 	})();
 	exports.BASE_PATH = BASE_PATH;
 
@@ -187,22 +194,58 @@ LRUMap.prototype = Object.freeze({
 			}
 		}
 	};
+	const _registry = new Map();
+	const shutdown = function() {
+		if (arguments.length > 1 && arguments[1]) {
+			let cancel = new Instances.SupportsBool();
+			cancel.data = false;
+			Services.obs.notifyObservers(cancel, "DTA:upgrade", null);
+			if (cancel.data) {
+				log(LOG_INFO, "Not going down right now - vetoed!");
+				return;
+			}
+		}
+		for (let i = _unloaders.length; ~(--i);) {
+			_runUnloader(_unloaders[i]);
+		}
+		_unloaders.length = 0;
+		for (let r of _registry.keys()) {
+			try {
+				let scope = _registry.get(r);
+				if (scope.asyncShutdown) {
+					let p = scope.asyncShutdown();
+					if (p && p.then) {
+						let re = Cu.reportError.bind(Cu);
+						let ns = Cu.nukeSandbox.bind(Cu);
+						p.then(function() {
+							ns(scope);
+						}, function(ex) {
+							re(ex);
+							ns(scope);
+						});
+						continue;
+					}
+				}
+
+				Cu.nukeSandbox(scope);
+			}
+			catch (ex) {}
+		}
+		for (let r of _registry.keys()) {
+			_registry.delete(r);
+		}
+		try {
+			_registry.clear();
+		}
+		catch (ex) {}
+
+		// Unload ourself
+		Cu.unload(SELF_PATH);
+		return;
+	}
 	exports.unload = function unload(fn) {
 		if (fn == "shutdown") {
-			if (arguments.length > 1 && arguments[1]) {
-				let cancel = new Instances.SupportsBool();
-				cancel.data = false;
-				Services.obs.notifyObservers(cancel, "DTA:upgrade", null);
-				if (cancel.data) {
-					log(LOG_INFO, "Not going down right now - vetoed!");
-					return;
-				}
-			}
-			for (let i = _unloaders.length; ~(--i);) {
-				_runUnloader(_unloaders[i]);
-			}
-			_unloaders.length = 0;
-			return;
+			return shutdown();
 		}
 		// add an unloader
 		if (typeof(fn) != "function") {
@@ -215,35 +258,141 @@ LRUMap.prototype = Object.freeze({
 		};
 	};
 
-	const _registry = Object.create(null);
-	exports.require = function require(module) {
-		module = BASE_PATH + module + ".js";
+	const require_prefixes = new Map();
+	require_prefixes.set(undefined, BASE_PATH);
+	require_prefixes.set(null, BASE_PATH);
+	require_prefixes.set("testsupport", BASE_PATH + "tests/");
+
+	const loadScript = (() => {
+		if (Services.scriptloader.loadSubScriptWithOptions) {
+			return (module, scope) => {
+				return Services.scriptloader.loadSubScriptWithOptions(module, {charset: "utf-8", target: scope});
+			};
+		}
+		return (mdoule, scope) => {
+			try {
+				return Services.scriptloader.loadSubScript(module, scope, "utf-8");
+			}
+			catch (ex) {
+				return Services.scriptLoader.loadSubScript(module, scope);
+			}
+		}
+	})();
+
+	const require = function require(base, module) {
+		let path = module.split("/").filter(e => !!e);
+		if (!path || !path.length) {
+			throw new Error("Invalid module path");
+		}
+		if (path[0] == "." || path[0] == "..") {
+			path = base.split("/").filter(e => !!e).concat(path);
+		}
+		for (let i = path.length - 2; i >= 0; --i) {
+			if (path[i] == ".") {
+				path.splice(i, 1);
+				continue;
+			}
+			if (path[i] != "..") {
+				continue;
+			}
+			if (i == 0) {
+				throw new Error("Invalid traversal");
+			}
+			path.splice(i - 1, 2);
+		}
+		let file = path.pop();
+		if (file == ".." || file == ".") {
+			throw new Error("Invalid traversal");
+		}
+		base = path.join("/");
+		let id = (!!base && [base, file].join("/")) || file;
+
+		let prefix;
+		if (path.length) {
+			prefix = require_prefixes.get(path[0]);
+			if (prefix) {
+				path.shift();
+			}
+		}
+		if (!prefix) {
+			prefix = require_prefixes.get();
+		}
+		if (prefix) {
+			path.unshift(prefix.replace(/\/$/, ""));
+		}
+		path.push(file);
+		module = path.join("/") + ".js";
 
 		// already loaded?
-		if (module in _registry) {
-			return _registry[module];
+		let scope = _registry.get(module);
+		if (scope) {
+			return scope.exports;
 		}
 
 		// try to load the module
-		let scope = {exports: Object.create(null)};
+		scope = Object.create(exports);
+		scope.exports = Object.create(null);
+		scope.require = require.bind(null, base);
+		scope.requireJoined = requireJoined.bind(null, base);
+		scope.module = {};
+		Object.defineProperty(scope.module, "id", {
+			value: id,
+			enumerable: true
+		});
+		Object.defineProperty(scope.module, "relid", {
+			value: "./" + file,
+			enumerable: true
+		});
+		Object.defineProperty(scope.module, "uri", {
+			value: module,
+			enumerable: true
+		});
+
 		try {
-			Services.scriptloader.loadSubScript(module, scope);
+			scope = Cu.Sandbox(Services.sysprincipal, {
+				sandboxName: module,
+				sandboxPrototype: scope,
+				wantXRays: false
+			});
+
+			// Add to registry write now to enable resolving cyclic dependencies.
+			_registry.set(module, scope);
+			try {
+				loadScript(module, scope);
+				if (!("exports" in scope) || !scope.exports) {
+					throw new Error("Invalid exports in module");
+				}
+			}
+			catch (ex) {
+				// Don't get half-loaded modules around!
+				_registry.delete(module);
+				throw new Error(
+					"Failed to load module " + id + " from: " + module + "\n" + (ex.message || ex.toString()),
+					ex.fileName || ex.filename,
+					ex.lineNumber  || ex.linenumber || ex.lineno
+					);
+			}
 		}
 		catch (ex) {
 			log(LOG_ERROR, "failed to load " + module, ex);
 			throw ex;
 		}
 
-		_registry[module] = scope.exports;
+		_registry.set(module, scope);
 
 		return scope.exports;
 	};
-	exports.requireJoined = function requireJoined(where, module) {
-		module = require(module);
-		for (let [k,v] in new Iterator(module)) {
-			where[k] = v;
+
+	const requireJoined = function requireJoined(base, where, module) {
+		module = require(base, module);
+		for (let k of Object.getOwnPropertyNames(module)) {
+			Object.defineProperty(where, k, Object.getOwnPropertyDescriptor(module, k));
 		}
 	};
+
+	exports.require = require.bind(null, "");
+	exports.requireJoined = requireJoined.bind(null, "");
+
 	exports.requireJSM = function requireJSM(mod) {
 		let _m = {};
 		Cu.import(mod, _m);
@@ -251,29 +400,13 @@ LRUMap.prototype = Object.freeze({
 		return _m;
 	};
 
-	// registry unloader; must be first :p
-	unload(function() {
-		log(LOG_INFO, "glue going down");
-		try {
-			let keys = Object.keys(_registry);
-			for (let i = keys.length; ~(--i);) {
-				delete _registry[keys[i]];
-			}
-			// unload ourselves
-			Cu.unload(SELF_PATH);
-		}
-		catch (ex) {
-			reportError(ex);
-		}
-	});
-
 	// init autoloaded modules
-	const logging = require("logging");
+	const logging = exports.require("logging");
 	for (let k of Object.keys(logging)) {
 		exports[k] = logging[k];
 		exports.EXPORTED_SYMBOLS.push(k);
 	}
-	const {getExt, setExt, addObserver} = require("preferences");
+	const {getExt, setExt, addObserver} = exports.require("preferences");
 	const LogPrefObs = {
 		observe: function(s,t,d) {
 			logging.setLogLevel(getExt("logging") ? logging.LOG_DEBUG : logging.LOG_NONE);
@@ -281,14 +414,14 @@ LRUMap.prototype = Object.freeze({
 	};
 	addObserver("extensions.dta.logging", LogPrefObs);
 	LogPrefObs.observe();
-	require("version").getInfo(function setupVersion(v) {
+	exports.require("version").getInfo(function setupVersion(v) {
 		log(
 			LOG_INFO,
 			v.NAME + "/" + v.VERSION + " on " + v.APP_NAME + "/" + v.APP_VERSION + " (" + v.LOCALE + " / " + v.OS + ") ready"
 			);
 	});
 	try {
-		require("main").main();
+		exports.require("main").main();
 	}
 	catch (ex) {
 		log(LOG_ERROR, "main failed to run", ex);

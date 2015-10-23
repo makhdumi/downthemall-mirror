@@ -4,7 +4,6 @@
 	- file, You can obtain one at http://mozilla.org/MPL/2.0/. -->
 
 <!-- avoid flickering while the main stylesheet loads -->
-<?xml-stylesheet href="data:text/css, .dta-toolbarbutton { list-style-image: none; }" type="text/css"?>
 <?xml-stylesheet href="chrome://dta/skin/integration/style.css" type="text/css"?>
 
 <!DOCTYPE overlay [
@@ -147,17 +146,23 @@
 	</vbox>
 
 	<panelmultiview id="PanelUI-multiView">
-		<panelview id="PanelUI-downthemall">
-			<toolbarbutton id="dta-panel-dta" label="DownThemAll! (&dta-tb-single.label;)" class="menuitem-iconic dta-menuitem dta-normal" tooltiptext="&dta-regular2.label;" command="dta:regular"/>
-			<toolbarbutton id="dta-panel-all" label="DownThemAll! (&dta-tb-all.label;)" class="menuitem-iconic dta-menuitem dta-normal" tooltiptext="&dta-regular2.label;" command="dta:regular-all"/>
-			<menuseparator />
-			<toolbarbutton id="dta-panel-manager" label="&dta-manager-button;" class="menuitem-iconic dta-menuitem dta-manager" tooltiptext="&dta-manager-button;" command="dta:manager" />
+		<panelview id="PanelUI-downthemall" flex="1" class="PanelUI-subView">
+			<label value="&dta-regular2.label;" class="panel-subview-header"/>
+			<vbox class="panel-subview-body">
+				<toolbarbutton id="dta-panel-dta" label="&dta-tb-single.label;" class="subviewbutton cui-withicon dta-menuitem dta-normal" tooltiptext="&dta-regular2.label;" command="dta:regular"/>
+				<toolbarbutton id="dta-panel-all" label="&dta-tb-all.label;" class="subviewbutton cui-withicon dta-menuitem dta-normal" tooltiptext="&dta-regular2.label;" command="dta:regular-all"/>
+				<menuseparator/>
+				<toolbarbutton id="dta-panel-manager" label="&dta-manager-button;" class="subviewbutton cui-withicon dta-menuitem dta-manager" tooltiptext="&dta-manager-button;" command="dta:manager" />
+			</vbox>
 		</panelview>
-		<panelview id="PanelUI-downthemall-turbo">
-			<toolbarbutton id="dta-tb-turbo" label="dTa OneClick! (&dta-tb-single.label;)" tooltiptext="&dta-regular-turbo2.label;" class="menuitem-iconic dta-menuitem dta-turbo" command="dta:turbo"/>
-			<toolbarbutton id="dta-tb-allturbo" label="dTa OneClick! (&dta-tb-all.label;)" tooltiptext="&dta-regular-turbo2.label;" class="menuitem-iconic dta-menuitem dta-turbo" command="dta:turbo-all"/>
-			<menuseparator />
-			<toolbarbutton id="dta-tb-manager2" label="&dta-manager-button;" class="menuitem-iconic dta-menuitem dta-manager" tooltiptext="&dta-manager-button;" command="dta:manager" />
+		<panelview id="PanelUI-downthemall-turbo" flex="1"  class="PanelUI-subView">
+			<label value="&dta-regular-turbo2.label;" class="panel-subview-header"/>
+			<vbox class="panel-subview-body">
+				<toolbarbutton id="dta-panel-turbo" label="&dta-tb-single.label;" tooltiptext="&dta-regular-turbo2.label;" class="subviewbutton cui-withicon dta-menuitem dta-turbo" command="dta:turbo"/>
+				<toolbarbutton id="dta-panel-allturbo" label="&dta-tb-all.label;" tooltiptext="&dta-regular-turbo2.label;" class="subviewbutton cui-withicon dta-menuitem dta-turbo" command="dta:turbo-all"/>
+				<menuseparator/>
+				<toolbarbutton id="dta-panel-manager2" label="&dta-manager-button;" class="subviewbutton cui-withicon dta-menuitem dta-manager" tooltiptext="&dta-manager-button;" command="dta:manager" />
+			</vbox>
 		</panelview>
 	</panelmultiview>
 

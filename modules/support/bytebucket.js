@@ -3,7 +3,7 @@
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 "use strict";
 
-const {TimerManager} = require("support/timers");
+const {TimerManager} = require("./timers");
 
 const Timers = new TimerManager();
 
@@ -41,7 +41,7 @@ Observers.prototype = {
 		this._obs.length = 0;
 	},
 	observe: function() {
-		this._obs.sort(function() Math.round(Math.random() - 0.5));
+		//this._obs.sort(function() Math.round(Math.random() - 0.5));
 	}
 };
 Observers.Manager = (function() {

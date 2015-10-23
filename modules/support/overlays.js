@@ -3,8 +3,8 @@
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 "use strict";
 
-const {defer} = require("support/defer");
-const obs = require("support/observers");
+const {defer} = require("./defer");
+const obs = require("./observers");
 
 /**
  * Specialized unloader that will trigger whenever either the window gets
@@ -28,8 +28,8 @@ exports.unloadWindow = function unloadWindow(window, fn) {
 // Watch for new browser windows opening then wait for it to load
 var watchers = new Map();
 function runOnLoad(window) {
-	window.addEventListener("load", function windowWatcher_onload() {
-		window.removeEventListener("load", windowWatcher_onload, false);
+	window.addEventListener("DOMContentLoaded", function windowWatcher_onload() {
+		window.removeEventListener("DOMContentLoaded", windowWatcher_onload, false);
 		let _w = watchers.get(window.location.toString());
 		if (!_w || !_w.length) {
 			return;
@@ -131,26 +131,29 @@ exports.registerOverlay = function registerOverlay(src, location, callback) {
 			let unloaders = [];
 
 			// apply styles
-			for (let data of xul.styles) {
-				let ss = document.createProcessingInstruction("xml-stylesheet", data);
-				document.insertBefore(ss, document.documentElement);
-				unloaders.push(function() ss.parentNode.removeChild(ss));
+			if (window instanceof Ci.nsIInterfaceRequestor) {
+				let winUtils = window.getInterface(Ci.nsIDOMWindowUtils);
+				for (let data of xul.styles) {
+					try {
+						let uri = Services.io.newURI(data, null, null);
+						winUtils.loadSheet(uri, Ci.nsIDOMWindowUtils.AUTHOR_SHEET);
+						unloaders.push(function() {
+							winUtils.removeSheet(uri, Ci.nsIDOMWindowUtils.AUTHOR_SHEET);
+						});
+					}
+					catch (ex) {
+						log(LOG_ERROR, "failed to load sheet: " + data, ex);
+					}
+				}
 			}
 
 			// Add all overlays
-			var tb = $("nav-bar");
-			tb = tb && tb.toolbox;
 			for (let node of xul.nodes) {
 				let id = node.getAttribute("id");
-				let target = null;
-				if (id === "BrowserToolbarPalette" && tb) {
-					target = tb.palette;
-				}
-				if (!target) {
-					target = $(id);
-				}
-				if (!target && tb) {
-					target = tb.palette.querySelector("#" + id);
+				let target = $(id);
+				if (!target && id === "BrowserToolbarPalette") {
+					target = $("navigator-toolbox");
+					target = target && target.palette;
 				}
 				if (!target) {
 					log(LOG_DEBUG, "no target for " + id + ", not inserting");
@@ -212,7 +215,7 @@ exports.registerOverlay = function registerOverlay(src, location, callback) {
 			if (n.nodeType !== 7 || n.target !== "xml-stylesheet") {
 				continue;
 			}
-			xul.styles.push(n.data);
+			xul.styles.push(n.data.replace(/^.*href=(["'])(.*?)\1.*$/, "$2"));
 		}
 		for (let n = doc.documentElement.firstChild; n; n = n.nextSibling) {
 			if (n.nodeType !== n.ELEMENT_NODE || !n.hasAttribute("id")) {

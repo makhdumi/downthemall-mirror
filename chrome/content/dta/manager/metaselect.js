@@ -2,15 +2,15 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 "use strict";
-/* global $, _, Utils, DefaultDownloadsDirectory, openUrl */
+/* global $, _, Utils, getDefaultDownloadsDirectory, openUrl */
 /* jshint browser:true */
 
-const hidpi = window.matchMedia && window.matchMedia("(min-resolution: 2dppx)").matches;
-const METALINK_LOGO = hidpi ? 'chrome://dta/skin/common/metalink64.png' : 'chrome://dta/skin/common/metalink32.png';
+var hidpi = window.matchMedia && window.matchMedia("(min-resolution: 2dppx)").matches;
+var METALINK_LOGO = hidpi ? 'chrome://dta/skin/common/metalink64.png' : 'chrome://dta/skin/common/metalink32.png';
 
-const Version = require("version");
+var Version = require("version");
 
-const MetaSelect = {
+var MetaSelect = {
 	_insertDownload: function(d) {
 		try {
 			if (d.lang && ~d.lang.search(/^\w{2}(?:-\w{2})?$/)) {
@@ -102,7 +102,9 @@ const MetaSelect = {
 			$('boxLicense').hidden = true;
 		}
 		if (!$("directory").value) {
-			$("directory").value = DefaultDownloadsDirectory.path;
+			getDefaultDownloadsDirectory(function(path) {
+				$("directory").value = path;
+			});
 		}
 	},
 	browseDir: function() {

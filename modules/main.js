@@ -11,6 +11,12 @@ const DTA = require("api");
 const Utils = require("utils");
 const obs = require("support/observers");
 
+// Tests will only be available in dev mode. See make.py
+exports.hasTests = "dta-tests";
+if (!("hasTests" in exports)) {
+	exports.hasTests = false;
+}
+
 /**
  * AboutModule
  */
@@ -26,7 +32,7 @@ AboutModule.prototype = Object.freeze({
 
 	QueryInterface: QI([Ci.nsIAboutModule]),
 
-	newChannel : function(aURI) {
+	newChannel: function(aURI) {
 		try {
 			if (!Version.ready) {
 				throw new Exception("Cannot build about:downthemall, version module not ready");
@@ -55,8 +61,32 @@ AboutModule.prototype = Object.freeze({
 			throw ex;
 		}
 	},
-	getURIFlags: function(aURI) Ci.nsIAboutModule.URI_SAFE_FOR_UNTRUSTED_CONTENT
+	getURIFlags: function(aURI) Ci.nsIAboutModule.URI_SAFE_FOR_UNTRUSTED_CONTENT,
+	getIndexedDBOriginPostfix: function(uri) null
 });
+
+function AboutTestsModule() { // dta-tests
+} // dta-tests
+AboutTestsModule.prototype = Object.freeze({ // dta-tests
+	classDescription: "DownThemAll! Tests about module", // dta-tests
+	classID: Components.ID('{6b5f6ca0-6a19-11e4-9803-0800200c9a66}'), // dta-tests
+	contractID: '@mozilla.org/network/protocol/about;1?what=dta-tests', // dta-tests
+
+	QueryInterface: QI([Ci.nsIAboutModule]), // dta-tests
+
+	newChannel: function(aURI) { // dta-tests
+		try { // dta-tests
+			log(LOG_ERROR, "aURI " + aURI.spec); // dta-tests
+			return Services.io.newChannel("chrome://dta-tests/content/dta-tests.xul", null, null); // dta-tests
+		} // dta-tests
+		catch (ex) { // dta-tests
+			log(LOG_ERROR, "failed to create about channel", ex); // dta-tests
+			throw ex; // dta-tests
+		} // dta-tests
+	}, // dta-tests
+	getURIFlags: function(aURI) Ci.nsIAboutModule.ALLOW_SCRIPT, // dta-tests
+	getIndexedDBOriginPostfix: function(uri) null // dta-tests
+}); // dta-tests
 
 function MetalinkInterceptModule() {}
 MetalinkInterceptModule.prototype = Object.freeze({
@@ -172,7 +202,7 @@ function migrate() {
 	const fn1_0 = [
 		function() {
 			// 1.0.1: #613 Multiple "slow-down" reports
-			log("resetting connection prefs");
+			log(LOG_DEBUG, "resetting connection prefs");
 			for (let e of NET_PREFS) {
 				Preferences.reset(e);
 			}
@@ -285,9 +315,7 @@ function registerOverlays() {
 			log(LOG_DEBUG, "Fire!");
 			fire._runUnloaders();
 
-			Components.utils.import("chrome://dta-modules/content/glue.jsm", {})
-				.require("loaders/integration")
-				.load(window, event);
+			require("loaders/integration").load(window, event);
 		}
 		function _maybeInsertButtons(ids, attr) {
 			function persist(tb, attr) {
@@ -370,18 +398,19 @@ function registerOverlays() {
 			}
 
 			if (window.CustomizableUI) {
-				for (let id of ids) {
-					let placement = window.CustomizableUI.getPlacementOfWidget(id);
-					if (!placement) {
-						log(LOG_DEBUG, id + " is not placeable");
-						continue;
+				for (let id of ids.reverse()) {
+					try {
+						log(LOG_DEBUG, "trying to place " + id);
+						window.CustomizableUI.ensureWidgetPlacedInWindow(id, window);
+						log(LOG_DEBUG, "placed " + id);
 					}
-					window.CustomizableUI.addWidgetToArea(id, placement.area, placement.position);
-					window.CustomizableUI.ensureWidgetPlacedInWindow(id, window);
-					log(LOG_DEBUG, "placed " + id + " " + JSON.stringify(placement));
+					catch (ex) {
+						log(LOG_ERROR, "Died placing " + id, ex);
+					}
 				}
 				return;
 			}
+			log(LOG_DEBUG, "running old");
 			for (let attr of ["currentset", "downthemall-currentset"]) {
 				if (!ids.length) {
 					return;
@@ -392,7 +421,6 @@ function registerOverlays() {
 				processToolbar(tb);
 			}
 		}
-		log(LOG_DEBUG, "running elementsStub");
 
 		window.setTimeout(function dta_firewalkswithme() {
 			try {
@@ -429,7 +457,7 @@ function registerOverlays() {
 					fire.addFireListener(panelbutton, "command");
 				}
 				fire.addFireListener($("dta:regular"), "command");
-				fire.addFireListener($("dta-regular-button"), "command");
+				fire.addFireListener($("dta-button"), "command");
 				fire.addFireListener($("dta-button"), "popupshowing");
 				fire.addFireListener($("dta-button"), "dragover");
 				fire.addFireListener($("dta:turbo"), "command");
@@ -570,7 +598,11 @@ exports.main = function main() {
 	log(LOG_INFO, "running main");
 
 	const {registerComponents} = require("components");
-	registerComponents([AboutModule, MetalinkInterceptModule]);
+	const components = [AboutModule, MetalinkInterceptModule];
+	if (exports.hasTests) {  // dta-tests
+		components.push(AboutTestsModule); // dta-tests
+	} // dta-tests
+	registerComponents(components);
 
 	migrate();
 

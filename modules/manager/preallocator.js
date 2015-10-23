@@ -7,10 +7,8 @@ const {
 	createOptimizedImplementation
 } = require("support/optimpl");
 
-const {prealloc: _asynccopier} = require("manager/preallocator/asynccopier");
-const {prealloc: _cothread} = require("manager/preallocator/cothread");
-
-const {Promise} = require("support/promise");
+const {prealloc: _asynccopier} = require("./preallocator/asynccopier");
+const {prealloc: _cothread} = require("./preallocator/cothread");
 
 const SIZE_MIN = (require("version").OS === 'winnt' ? 256 : 2048) * 1024;
 const SIZE_COTHREAD_MAX = (1<<24);
@@ -49,7 +47,7 @@ exports.prealloc = function prealloc(file, size, perms, sparseOk) {
 		return null;
 	}
 	log(LOG_INFO, "pa: preallocating: " + file + " size: " + size);
-	let deferred = Promise.defer();
-	_impl.callImpl(file, size, perms, sparseOk, function(r) deferred.resolve(r));
-	return deferred.promise;
+	return new Promise(function(resolve, reject) {
+		_impl.callImpl(file, size, perms, sparseOk, r => resolve(r));
+	});
 };

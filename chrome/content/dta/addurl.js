@@ -2,16 +2,16 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 "use strict";
-/* global _, DTA, $, $$, Utils, Preferences, DefaultDownloadsDirectory, unloadWindow */
+/* global _, DTA, $, $$, Utils, Preferences, getDefaultDownloadsDirectory, unloadWindow */
 /* jshint browser:true */
-const prompts = require("prompts");
-const Version = require("version");
-const {isWindowPrivate} = require("support/pbm");
+var prompts = require("prompts");
+var Version = require("version");
+var {isWindowPrivate} = require("support/pbm");
 
 var dropDowns = {};
 
 /* global BatchGenerator */
-XPCOMUtils.defineLazyGetter(this, "BatchGenerator", function() {
+XPCOMUtils.defineLazyGetter(window, "BatchGenerator", function() {
 	const {BatchGenerator} = require("support/batchgen");
 	return BatchGenerator;
 });
@@ -31,7 +31,9 @@ var Dialog = {
 
 			if (!this.ddDirectory.value) {
 				log(LOG_DEBUG, "Using default download directory, value was " + this.ddDirectory.value);
-				this.ddDirectory.value = DefaultDownloadsDirectory.path;
+				getDefaultDownloadsDirectory((function(path) {
+					this.ddDirectory.value = path;
+				}).bind(this));
 			}
 			var address = $('address');
 			var filename = $("filename");

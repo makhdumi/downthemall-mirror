@@ -11,7 +11,70 @@ test("Service contents", function() {
 });
 
 test("Instances contents", function() {
-	var expected = ["XHR", "xhr", "DOMSerializer", "domserializer", "MimeInputStream", "mimeinputstream", "SupportsUint32", "supportsuint32", "Transferable", "transferable", "UniConverter", "uniconverter", "AsyncStreamCopier", "PlainAsyncStreamCopier", "BinaryInputStream", "PlainBinaryInputStream", "BinaryOutputStream", "PlainBinaryOutputStream", "BufferedOutputStream", "PlainBufferedOutputStream", "ConverterOutputStream", "PlainConverterOutputStream", "FileInputStream", "PlainFileInputStream", "PlainFileOutputStream", "FilePicker", "PlainFilePicker", "Hash", "PlainHash", "PlainLocalFile", "Pipe", "PlainPipe", "Process", "PlainProcess", "Sound", "PlainSound", "ScriptableInputStream", "PlainScriptableInputStream", "ScriptError", "PlainScriptError", "StringInputStream", "PlainStringInputStream", "PlainTimer", "ZipReader", "PlainZipReader", "FileOutputStream", "LocalFile", "Timer", "SupportsBool", "supportsbool", "SupportsString", "supportsstring", "InputStreamPump", "PlainInputStreamPump", "StreamListenerTee", "PlainStreamListenerTee"];
+	var expected = [
+		"AsyncStreamCopier",
+		"BinaryInputStream",
+		"BinaryOutputStream",
+		"BufferedOutputStream",
+		"ConverterOutputStream",
+		"DOMSerializer",
+		"FileInputStream",
+		"FileOutputStream",
+		"FilePicker",
+		"Hash",
+		"InputStreamPump",
+		"LocalFile",
+		"MimeInputStream",
+		"Pipe",
+		"PlainAsyncStreamCopier",
+		"PlainBinaryInputStream",
+		"PlainBinaryOutputStream",
+		"PlainBufferedOutputStream",
+		"PlainConverterOutputStream",
+		"PlainFileInputStream",
+		"PlainFileOutputStream",
+		"PlainFilePicker",
+		"PlainHash",
+		"PlainInputStreamPump",
+		"PlainLocalFile",
+		"PlainPipe",
+		"PlainProcess",
+		"PlainScriptError",
+		"PlainScriptableInputStream",
+		"PlainSound",
+		"PlainStreamListenerTee",
+		"PlainStringInputStream",
+		"PlainTimer",
+		"PlainZipReader",
+		"Process",
+		"ScriptError",
+		"ScriptableInputStream",
+		"Sound",
+		"StreamListenerTee",
+		"StringInputStream",
+		"SupportsArray",
+		"SupportsBool",
+		"SupportsInt32",
+		"SupportsInterfacePointer",
+		"SupportsString",
+		"SupportsUint32",
+		"Timer",
+		"Transferable",
+		"UniConverter",
+		"XHR",
+		"ZipReader",
+		"domserializer",
+		"mimeinputstream",
+		"supportsarray",
+		"supportsbool",
+		"supportsint32",
+		"supportsinterfacepointer",
+		"supportsstring",
+		"supportsuint32",
+		"transferable",
+		"uniconverter",
+		"xhr"
+	];
 	var {Instances: I} = requireJSM("chrome://dta-modules/content/glue.jsm");
 	arrayEqual(Object.keys(I), expected, "Glue Instances are complete");
 });
@@ -150,4 +213,44 @@ test("lazyProto very frozen", function() {
 
 	var o = Object.freeze(new O());
 	throws(function() o.testnum, "Cannot mess with frozen objects");
+});
+
+test("require simple", function() {
+	var {require} = requireJSM("chrome://dta-modules/content/glue.jsm");
+
+	var simple = require("testsupport/require/simple");
+	strictEqual(JSON.stringify(simple.exports), JSON.stringify({
+		"module": {
+			"id": "testsupport/require/simple",
+			"relid": "./simple",
+			"uri": "chrome://dta-modules/content/tests/require/simple.js"
+		}
+	}));
+	strictEqual(JSON.stringify(simple.module), JSON.stringify({
+		"id": "testsupport/require/simple",
+		"relid": "./simple",
+		"uri": "chrome://dta-modules/content/tests/require/simple.js"
+	}));
+});
+
+test("require recursive", function() {
+	var {require} = requireJSM("chrome://dta-modules/content/glue.jsm");
+
+	var rec = require("testsupport/require/recursive");
+	strictEqual(rec.a, 1);
+	strictEqual(rec.a, rec.b);
+	strictEqual(rec.a + 1, rec.c);
+	strictEqual(rec.a + 2, rec.d);
+});
+
+test("require cyclic", function() {
+	var {require} = requireJSM("chrome://dta-modules/content/glue.jsm");
+
+	var a = require('testsupport/require/cyclicA');
+	var b = require('testsupport/require/cyclicB');
+
+	ok(a.a, 'a exists');
+	ok(b.b, 'b exists')
+	strictEqual(a.a().b, b.b, 'a gets b');
+	strictEqual(b.b().a, a.a, 'b gets a');
 });

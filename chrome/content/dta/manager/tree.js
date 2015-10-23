@@ -10,7 +10,7 @@
 /* global TextCache_PAUSED */
 /* jshint browser:true, latedef:false */
 
-XPCOMUtils.defineLazyGetter(this, "ImportExport", function() require("manager/imex"));
+XPCOMUtils.defineLazyGetter(window, "ImportExport", function() require("manager/imex"));
 
 function FileDataProvider(download, file) {
 	this._download = download;
@@ -32,7 +32,7 @@ FileDataProvider.prototype = {
 	checkFile: function() {
 		Task.spawn(this._checkFile);
 	},
-	_checkFile: function() {
+	_checkFile: function*() {
 		delete this._timer;
 		let exists = yield OS.File.exists(this._file.path);
 		if (!exists) {
@@ -50,7 +50,7 @@ FileDataProvider.prototype = {
 };
 
 
-const Tree = {
+var Tree = {
 	init: function(elem) {
 		this.elem = elem;
 		this._downloads = [];
@@ -92,12 +92,6 @@ const Tree = {
 			tp.showSpeedLimitList(event);
 		}, true);
 		$('search').addEventListener('search', function(event) tp.setFilter(event.target.value), true);
-
-		if (Components.interfacesByID["{C06DC4D3-63A2-4422-A0A3-5F2EDDECA8C1}"]) {
-			this.getCellProperties = this.getCellProperties_legacy;
-			this.getColumnProperties = this.getColumnProperties_legacy;
-			this.getRowProperties = this.getRowProperties_legacy;
-		}
 
 		this.elem.treeBoxObject.view = this;
 		this.assembleMenus();
@@ -332,18 +326,18 @@ const Tree = {
 
 		let cmpFun = (function () {
 			switch (id) {
-			case 'task':
+			case 'colTask':
 				if (Prefs.showOnlyFilenames) {
 					return function(d) d.destinationName;
 				}
 				return function(d) d.urlManager.usable;
-			case 'dim':
+			case 'colSize':
 				return function(d) d.totalSize;
-			case 'status':
+			case 'colStatus':
 				return function(d) d.status;
-			case 'path':
+			case 'colPath':
 				return function(d) d.destinationPath;
-			case 'domain':
+			case 'colDomain':
 				return function(d) d.urlManager.domain;
 			};
 			throw new Exception("cmpFun not implemented");
@@ -374,6 +368,7 @@ const Tree = {
 		try {
 			// save selection
 			let selectedIds = this._getSelectedFilteredIds();
+
 			this._box.rowCountChanged(0, -this.rowCount);
 			if (this.filtered) {
 				this._filtered = this._matcher.filter(this._downloads);
@@ -579,57 +574,6 @@ const Tree = {
 		}
 		return null;
 	},
-	getCellProperties_legacy: function(idx, col, prop) {
-		const cidx = col.index;
-		if (cidx !== 2 && cidx !== 0) {
-			return;
-		}
-		else if (cidx === 2) {
-			prop.AppendElement(this.iconicAtom);
-			prop.AppendElement(this.progressAtom);
-			let d = this._filtered[idx];
-			if (!d) {
-				return;
-			}
-			switch (d.state) {
-				case QUEUED:
-					return;
-				case COMPLETE:
-					prop.AppendElement(this.completedAtom);
-					if (d.hashCollection) {
-						prop.AppendElement(this.verifiedAtom);
-					}
-				return;
-				case PAUSED:
-					prop.AppendElement(this.pausedAtom);
-					if (!d.totalSize || d.progress < 5) {
-						prop.AppendElement(this.pausedUndeterminedAtom);
-					}
-					if (d.autoRetrying) {
-						prop.AppendElement(this.pausedAutoretryingAtom);
-					}
-				return;
-				case FINISHING:
-				case RUNNING:
-					prop.AppendElement(this.inprogressAtom);
-					return;
-				case CANCELED:
-					prop.AppendElement(this.canceledAtom);
-					return;
-			}
-		}
-		else if (cidx === 0) {
-			let d = this._filtered[idx];
-			if (!d) {
-				return;
-			}
-			prop.AppendElement(this.iconicAtom);
-			prop.AppendElement(d.iconAtom);
-			if (d.isPrivate) {
-				prop.AppendElement(this.privateAtom);
-			}
-		}
-	},
 	_cpprop_iconic: "iconic progress",
 	_cpprop_iconiccomplete: "iconic progress completed",
 	_cpprop_iconicverified: "iconic progress completed verified",
@@ -695,9 +639,7 @@ const Tree = {
 	performAction: function(action) {},
 	performActionOnRow: function(action, index, column) {},
 	performActionOnCell: function(action, index, column) {},
-	getColumnProperties_legacy: function(column, element, prop) {},
 	getColumnProperties: function(column, element) "",
-	getRowProperties_legacy: function(idx, prop) {},
 	getRowProperties: function(idx) "",
 	setCellValue: function(idx, col, value) {},
 
@@ -814,9 +756,14 @@ const Tree = {
 			}
 		}
 	},
-	fastLoad: function(download) this._downloads.push(download) -1,
+	fastLoad: function(download) {
+		if (download.state === COMPLETE) {
+			++Dialog.completed;
+		}
+		return this._downloads.push(download) - 1;
+	},
 	add: function(download) {
-		let pos = download.position = this._downloads.push(download) -1;
+		let pos = download.position = this.fastLoad(download);
 		if (this.filtered) {
 			download.filteredPosition = -1;
 			this.doFilterOne(download);
@@ -971,16 +918,19 @@ const Tree = {
 					// un-removable :p
 					return;
 				}
+				this._downloads.splice(d.position, 1);
+				this._box.rowCountChanged(d.position, -1);
+				last = Math.max(d.filteredPosition, last);
+				if (d.state === COMPLETE) {
+					--Dialog.completed;
+				}
+				if (!d.isOf(RUNNING | PAUSED)) {
+					Dialog.wasRemoved(d);
+				}
 				// wipe out any info/tmpFiles
 				if (!d.isOf(COMPLETE | CANCELED)) {
 					d.deleting = true;
 					d.cancel();
-				}
-				this._downloads.splice(d.position, 1);
-				this._box.rowCountChanged(d.position, -1);
-				last = Math.max(d.filteredPosition, last);
-				if (!d.isOf(RUNNING | PAUSED)) {
-					Dialog.wasRemoved(d);
 				}
 				d.cleanup();
 			}
@@ -999,7 +949,7 @@ const Tree = {
 	},
 	_removeByState: function(state, onlyGone) {
 		this.beginUpdate();
-		Task.spawn((function() {
+		Task.spawn((function*() {
 			try {
 				QueueStore.beginUpdate();
 				var removing = [];
@@ -1375,8 +1325,6 @@ const Tree = {
 		{item: 'cmdMoveBottom', f: function(d) d.max !== d.rows - 1}
 	],
 	_refreshTools_items: [
-		{items: ['cmdLaunch', "launch"], f: function(d) !!d.curFile},
-		{items: ["cmdOpenFolder", "folder"], f: function(d) !!d.curFolder},
 		{items: ["cmdDelete", "delete"], f: function(d) d.state === COMPLETE},
 
 		{items: ['cmdRemoveSelected', 'cmdExport', 'cmdGetInfo', 'perDownloadSpeedLimit'], f: function(d) !!d.count},
@@ -1384,9 +1332,14 @@ const Tree = {
 		{items: ['cmdAddChunk', 'cmdRemoveChunk', 'cmdForceStart'],
 			f: function(d) d.isOf(QUEUED | RUNNING | PAUSED | CANCELED)},
 	],
+	_refreshTools_items_deferred: [
+		{items: ['cmdLaunch', "launch"], f: function(d) !!d.curFile},
+		{items: ["cmdOpenFolder", "folder"], f: function(d) !!d.curFolder},
+	],
 	_refreshTools_init: function() {
 		this._refreshTools_item.forEach(function(e) e.item = $(e.item));
 		this._refreshTools_items.forEach(function(e) e.items = $.apply(null, e.items));
+		this._refreshTools_items_deferred.forEach(function(e) e.items = $.apply(null, e.items));
 	},
 	refreshTools: function(d) {
 		if (this._updating || (d && ('position' in d) && !this.selection.isSelected(d.position))) {
@@ -1424,18 +1377,25 @@ const Tree = {
 				states.max = Math.max(qi.filteredPosition, states.max);
 			}
 			let cur = this.current;
-			Task.spawn((function() {
+			for (let i = 0, e = this._refreshTools_item.length; i < e; ++i) {
+				let item = this._refreshTools_item[i];
+				let disabled = item.f(states) ? "false" : "true";
+				item.item.setAttribute("disabled", disabled);
+			}
+			for (let i = 0, e = this._refreshTools_items.length; i < e; ++i) {
+				let items = this._refreshTools_items[i];
+				let disabled = items.f(states) ? "false" : "true";
+				items = items.items;
+				for (let ii = 0, ee = items.length; ii < ee; ++ii) {
+					items[ii].setAttribute("disabled", disabled);
+				}
+			}
+			Task.spawn((function*() {
 				try {
 					states.curFile = (cur && cur.state === COMPLETE && (yield OS.File.exists(cur.destinationLocalFile.path)));
 					states.curFolder = (cur && (yield OS.File.exists(new Instances.LocalFile(cur.destinationPath).path)));
-
-					for (let i = 0, e = this._refreshTools_item.length; i < e; ++i) {
-						let item = this._refreshTools_item[i];
-						let disabled = item.f(states) ? "false" : "true";
-						item.item.setAttribute("disabled", disabled);
-					}
-					for (let i = 0, e = this._refreshTools_items.length; i < e; ++i) {
-						let items = this._refreshTools_items[i];
+					for (let i = 0, e = this._refreshTools_items_deferred.length; i < e; ++i) {
+						let items = this._refreshTools_items_deferred[i];
 						let disabled = items.f(states) ? "false" : "true";
 						items = items.items;
 						for (let ii = 0, ee = items.length; ii < ee; ++ii) {
@@ -1503,20 +1463,14 @@ const Tree = {
 	},
 	invalidate: function(d, cell) {
 		if (!d) {
-			Dialog.completed = 0;
-			for (d of Tree.all) {
-				if (d.state === COMPLETE) {
-					Dialog.completed++;
-				}
-			}
 			this._box.invalidate();
 			this.refreshTools(this);
 			return;
 		}
 
 		if (d instanceof Array) {
-			for (let i of d) {
-				this._invalidate_item(i, cell);
+			for (let i = 0, e = d.length; i < e; ++i) {
+				this._invalidate_item(d[i], cell);
 			}
 			return;
 		}
@@ -1675,12 +1629,11 @@ const Tree = {
 			let ids;
 			try {
 				ids = this._getSelectedFilteredIds(true);
-				for (let [idx, id] in Iterator(ids)) {
-					id = id + idx;
+				for (let i = 0, e = ids.length; i < e; ++i) {
+					let id = ids[i] + i;
 					this._downloads.unshift(this._downloads.splice(id, 1)[0]);
 				}
 				this.doFilter();
-				this.selection.rangedSelect(0, ids.length - 1, true);
 			}
 			finally {
 				this.savePositions();
@@ -1688,6 +1641,7 @@ const Tree = {
 				this.endUpdate();
 			}
 			this._box.ensureRowIsVisible(0);
+			this.selection.rangedSelect(0, ids.length - 1, true);
 		}
 		catch (ex) {
 			log(LOG_ERROR, "Mover::top", ex);
@@ -1699,12 +1653,11 @@ const Tree = {
 			let ids;
 			try {
 				ids = this._getSelectedFilteredIds();
-				for (let [idx, id] in Iterator(ids)) {
-					id = id - idx;
+				for (let i = 0, e = ids.length; i < e; ++i) {
+					let id = ids[i] - i;
 					this._downloads.push(this._downloads.splice(id, 1)[0]);
 				}
 				this.doFilter();
-				this.selection.rangedSelect(this._filtered.length - ids.length, this._filtered.length - 1, true);
 			}
 			finally {
 				this.savePositions();
@@ -1712,6 +1665,7 @@ const Tree = {
 				this.endUpdate();
 			}
 			this._box.ensureRowIsVisible(this.rowCount - 1);
+			this.selection.rangedSelect(this._filtered.length - ids.length, this._filtered.length - 1, true);
 		}
 		catch (ex) {
 			log(LOG_ERROR, "Mover::bottom", ex);
@@ -1832,7 +1786,7 @@ const Tree = {
 requireJoined(Tree, "manager/matcher");
 requireJoined(Tree, "support/atoms");
 
-const FileHandling = {
+var FileHandling = {
 	get _uniqueList() {
 		let u = {};
 		for (let d in Tree.selected) {
@@ -1872,35 +1826,38 @@ const FileHandling = {
 		}
 	},
 	deleteFile: function() {
-		Task.spawn(function() {
-			let list = [];
-			for (let d in this._uniqueList) {
-				if ((yield OS.File.exists(d.destinationLocalFile.path))) {
+		Task.spawn(function*() {
+			try {
+				let list = [];
+				for (let d in this._uniqueList) {
 					list.push(d);
 				}
-			}
-			let msg = '';
-			if (list.length < 25) {
-				msg = _('deletetexts');
+				let msg = '';
+				if (list.length < 25) {
+					msg = _('deletetexts');
+					for (let d of list) {
+						msg += "\n" + d.destinationLocalFile.leafName;
+					}
+				}
+				else {
+					msg = _('deletetextl.2', [list.length], list.length);
+				}
+				if (list.length && Prompts.confirm(window, _('deletecaption'), msg, _('delete'), Prompts.CANCEL, null, 1)) {
+					return;
+				}
 				for (let d of list) {
-					msg += "\n" + d.destinationLocalFile.leafName;
+					try {
+						yield OS.File.remove(d.destinationLocalFile.path);
+					}
+					catch (ex) {
+						// no-op
+					}
 				}
+				Tree.remove(list, true);
 			}
-			else {
-				msg = _('deletetextl', [list.length]);
+			catch (ex) {
+				log(LOG_ERROR, "deleteFile", ex);
 			}
-			if (list.length && Prompts.confirm(window, _('deletecaption'), msg, _('delete'), Prompts.CANCEL, null, 1)) {
-				return;
-			}
-			for (let d of list) {
-				try {
-					yield OS.File.remove(d.destinationLocalFile.path);
-				}
-				catch (ex) {
-					// no-op
-				}
-			}
-			Tree.remove(null, true);
-		});
+		}.bind(this));
 	}
 };

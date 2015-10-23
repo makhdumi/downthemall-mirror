@@ -1,17 +1,17 @@
 #!/usr/bin/env python
 import os
-import sys
 import re
+import sys
 
-from optparse import OptionParser
-from warnings import warn
-from io import BytesIO
-from zipfile import ZipFile, ZIP_STORED, ZIP_DEFLATED
-from glob import glob
 from fnmatch import fnmatch
-from time import strftime
-from xml.dom.minidom import parseString as XML
 from functools import wraps
+from glob import glob
+from io import BytesIO
+from optparse import OptionParser
+from time import strftime
+from warnings import warn
+from xml.dom.minidom import parseString as XML
+from zipfile import ZipFile, ZIP_STORED, ZIP_DEFLATED
 
 try:
     from xpisign.context import ZipFileMinorCompression as _Minor
@@ -110,7 +110,7 @@ FILES = ("install.rdf",
          "modules/manager/",
          "modules/support/",
          )
-TESTS = ("modules/testsupport/",
+TESTS = ("modules/tests/",
          "tests"
          )
 EXCLUDED = ("chrome/locale/*/landingpage.dtd",
@@ -198,7 +198,7 @@ def files(*args, **kw):
             for i in files(f + "*"):
                 yield i
         elif os.path.isfile(f) and not any(fnmatch(f, x) for x in excluded):
-            yield f
+            yield f.replace("\\", "/")
 
     for p in args:
         gg = glob(p)
@@ -215,9 +215,9 @@ def releaseversionjs(fp, **kw):
     with Reset(io):
         for l in fp:
             if "const ID = " in l:
-                print >>io, 'const ID = "{}"'.format(RELEASE_ID)
+                print >> io, 'const ID = "{}"'.format(RELEASE_ID)
             else:
-                print >>io, l,
+                print >> io, l,
     return io
 
 
@@ -228,7 +228,7 @@ def droptests(fp, **kw):
         for l in fp:
             if "dta-tests" in l:
                 continue
-            print >>io, l,
+            print >> io, l,
     return io
 
 
@@ -252,7 +252,7 @@ def localize(fp, **kw):
                 k = k[-2] if len(k[-1]) < 3 else k[-1]
                 if not k or not v:
                     continue
-                if not k in locale:
+                if k not in locale:
                     locale[k] = list()
                 locale[k] += v,
         locales += locale,
@@ -291,7 +291,7 @@ def localize(fp, **kw):
 
     io = BytesIO()
     with Reset(io):
-        print >>io, rdf.toxml(encoding="utf-8")
+        print >> io, rdf.toxml(encoding="utf-8")
         rdf.unlink()
     return io
 
@@ -313,7 +313,7 @@ def releasify(fp, **kw):
 
     io = BytesIO()
     with Reset(io):
-        print >>io, rdf.toxml(encoding="utf-8")
+        print >> io, rdf.toxml(encoding="utf-8")
     rdf.unlink()
     return io
 
@@ -332,7 +332,7 @@ def set_uurl(fp, **kw):
 
     io = BytesIO()
     with Reset(io):
-        print >>io, rdf.toxml(encoding="utf-8")
+        print >> io, rdf.toxml(encoding="utf-8")
     rdf.unlink()
     return io
 
@@ -347,7 +347,7 @@ def releaserdf(fp, **kw):
     if not re.match(r"^[\d.]+$", node.data) or True:
         raise ValueError("Invalid release version: {}".format(node.data))
 
-    return releasify(fp, *+kw)
+    return releasify(fp, **kw)
 
 
 @localized
@@ -377,7 +377,7 @@ def nightlyrdf(fp, **kw):
 
     io = BytesIO()
     with Reset(io):
-        print >>io, rdf.toxml(encoding="utf-8")
+        print >> io, rdf.toxml(encoding="utf-8")
     rdf.unlink()
     return set_uurl(io, **kw)
 
@@ -392,7 +392,7 @@ def devrdf(fp, **kw):
 
     io = BytesIO()
     with Reset(io):
-        print >>io, rdf.toxml(encoding="utf-8")
+        print >> io, rdf.toxml(encoding="utf-8")
     rdf.unlink()
     return io
 
@@ -427,7 +427,8 @@ def pack(xpi, patterns, **kw):
                         write(f, ZIP_DEFLATED, nightlyrdf)
                     else:
                         write(f, ZIP_DEFLATED, devrdf)
-                elif not kw.get("tests", False) and f == "chrome.manifest":
+                elif not kw.get("tests", False) and \
+                        (f == "chrome.manifest" or f == "modules/main.js"):
                     write(f, ZIP_DEFLATED, droptests)
                 elif any(fnmatch(f, p) for p in PLAIN):
                     write(f, ZIP_STORED)

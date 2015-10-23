@@ -2,21 +2,21 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-const LINK_FILTER = FilterManager.LINK_FILTER;
-const IMAGE_FILTER = FilterManager.IMAGE_FILTER;
+var LINK_FILTER = FilterManager.LINK_FILTER;
+var IMAGE_FILTER = FilterManager.IMAGE_FILTER;
 
-const Prompts = require("prompts");
+var Prompts = require("prompts");
 
-const Main = {
+var Main = {
 	load: function() {
 		$('alert2').hidden = !('nsIAlertsService' in Ci);
 	}
 }
 
-const Privacy = {
+var Privacy = {
 	load: function() {
 		try {
-			var log = !DTA.getProfileFile('dta_log.txt').exists();
+			var log = !DTA.getProfileFile("log.txt").exists();
 			$("butShowLog", 'butDelLog', 'butRevealLog')
 				.forEach(function(e) { e.disabled = log; });
 
@@ -65,7 +65,7 @@ const Privacy = {
 	}
 };
 
-const Advanced = {
+var Advanced = {
 	load: function() {
 		// delay these assignments, or else we get messed up by the slider c'tor
 		$('maxchunks').setAttribute('preference', 'dtamaxchunks');
@@ -119,7 +119,7 @@ const Advanced = {
 	}
 };
 
-const Interface = {
+var Interface = {
 	init: function(pref, which) {
 		try {
 			Components.utils.import("resource://mintrayr/mintrayr.jsm", {});
@@ -143,7 +143,7 @@ const Interface = {
 	}
 };
 
-const Filters = {
+var Filters = {
 	_filters: [],
 	_lastRowEdited : -1,
 
@@ -171,12 +171,6 @@ const Filters = {
 	},
 
 	load: function() {
-		if (Components.interfacesByID["{C06DC4D3-63A2-4422-A0A3-5F2EDDECA8C1}"]) {
-			this.getCellProperties = this.getCellProperties_legacy;
-			this.getColumnProperties = this.getColumnProperties_legacy;
-			this.getRowProperties = this.getRowProperties_legacy;
-		}
-
 		this._elem = $("filterTable");
 		this._elem.view = this;
 
@@ -396,16 +390,13 @@ const Filters = {
 	performAction: function(action) {},
 	performActionOnRow: function(action, index, column) {},
 	performActionOnCell: function(action, index, column) {},
-	getRowProperties_legacy: function(idx, prop) {},
 	getRowProperties: function(idx) "",
-	getCellProperties_legacy: function(idx, column, prop) {},
 	getCellProperties: function(idx, column) "",
-	getColumnProperties_legacy: function(column, element, prop) {},
 	getColumnProperties: function(column, element) "",
 	setCellValue: function(idx, col, value) {}
 };
 
-const Servers = {
+var Servers = {
 	_limits: [],
 	_editing: null,
 	init: function() {
@@ -540,7 +531,7 @@ const Servers = {
 };
 requireJoined(Servers, "support/serverlimits");
 
-const Schedule = {
+var Schedule = {
 	init: function() {
 		this.setupSchedDeck();
 		$("schedenable").addEventListener("command", function() Schedule.setupSchedDeck(), false);
@@ -558,7 +549,7 @@ const Schedule = {
 	}
 };
 
-const Prefs = {
+var Prefs = {
 	load: function() {
 		if (require("version").APP_ID == "{ec8030f7-c20a-464f-9b0e-13a3a9e97384}" && !Preferences.hasUserValue("general.skins.selectedSkin")) {
 			document.documentElement.setAttribute("firefoxtheme", true);

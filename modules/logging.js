@@ -5,6 +5,9 @@
 
 const global = this;
 
+const CATEGORY = "component javascript";
+
+
 var UNKNOWN_STACK = {
 	stackMsg: "",
 	sourceName: "unknown",
@@ -16,31 +19,34 @@ Object.freeze(UNKNOWN_STACK);
 const GLUE = "chrome://dta-modules/content/glue.jsm -> ";
 
 function prepareStack(stack) {
-	if (!stack || !(stack instanceof Ci.nsIStackFrame)) {
-		stack = Components.stack;
-		for (let i = 0; stack && i < 2; ++i) {
-			stack = stack.caller;
-		}
-		if (!stack) {
-			return UNKNOWN_STACK;
-		}
+	let message;
+	let sourceName = "unknown";
+	let sourceLine = "";
+	let lineNumber = 0;
+	if (typeof(stack) === "string") {
+		message = stack.split("\n");
 	}
-	let sourceName = (stack.filename || "unknown").replace(GLUE, "");
-	let sourceLine = stack.sourceLine;
-	let lineNumber = stack.lineNumber;
-	let message = [];
-	for (let i = 0; stack && i < 60; ++i, stack = stack.caller) {
-		if (stack.lineNumber) {
-			message.push(
-				"\t" +
-				(stack.name || "[anonymous]") +
-				"() @ " +
-				(stack.filename || "unknown").replace(GLUE, "") +
-				":" +
-				stack.lineNumber);
+	else {
+		if (!stack || !(stack instanceof Ci.nsIStackFrame) ) {
+			stack = Components.stack;
+			for (let i = 0; stack && i < 2; ++i) {
+				stack = stack.caller;
+			}
+			if (!stack) {
+				return UNKNOWN_STACK;
+			}
 		}
-		else {
-			message.push("\t[native @ " + (stack.languageName || "???" ) + "]");
+		sourceName = (stack.filename || sourceName).replace(GLUE, "");
+		sourceLine = stack.sourceLine || sourceLine;
+		lineNumber = stack.lineNumber || lineNumber;
+		message = [];
+		for (let i = 0; stack && i < 60; ++i, stack = stack.caller) {
+			if (stack.lineNumber) {
+				message.push(`\t${stack.name || "[anonymous]"}() @ ${(stack.filename || "unknown").replace(GLUE, "")}:${stack.lineNumber}`);
+			}
+			else {
+				message.push(`\t[native @ ${stack.languageName || "???"}]`);
+			}
 		}
 	}
 	return {
@@ -54,7 +60,8 @@ function prepareStack(stack) {
 
 lazy(global, "file", function() {
 	let file = Services.dirsvc.get("ProfD", Ci.nsIFile);
-	file.append('dta_log.txt');
+	file.append("downthemall.net");
+	file.append('log.txt');
 	if (file.exists() && file.fileSize > (256 * 1024)) {
 		try {
 			file.remove(false);
@@ -62,6 +69,9 @@ lazy(global, "file", function() {
 		catch (ex) {
 			// no op
 		}
+	}
+	if (!file.parent.exists()) {
+		file.parent.create(file.DIRECTORY_TYPE, 0o755);
 	}
 	return file;
 });
@@ -100,7 +110,7 @@ function getTimeString() {
 		fmt(time.getMilliseconds());
 }
 exports.log = function(level, message, exception) {
-	if (global.level > level)  {
+	if (global.level > level && level < exports.LOG_ERROR)  {
 		return;
 	}
 	try {
@@ -110,7 +120,7 @@ exports.log = function(level, message, exception) {
 			message = exception.message;
 		}
 		else if (exception) {
-			message = message + " [Exception: " + exception.message + "]";
+			message = `${message} [Exception: ${exception.message || exception.toString()}]`;
 		}
 
 		let {
@@ -119,29 +129,33 @@ exports.log = function(level, message, exception) {
 			sourceLine,
 			lineNumber,
 			columnNumber
-		} = prepareStack((exception && exception.location) || null);
+		} = prepareStack((exception && (exception.location || exception.stack)) || null);
 
 		if (stackMsg) {
 			message += "\n" + stackMsg;
 		}
 
-		let category = "component javascript";
+		let category = CATEGORY;
 
 		if (exception) {
+			let sn;
 			if (exception instanceof Ci.nsIScriptError) {
-				sourceName = exception.sourceName;
+				sn = exception.sourceName;
 				sourceLine = exception.sourceLine;
 				lineNumber = exception.lineNumber;
 				columnNumber = exception.columnNumber;
 				category = exception.category;
 			}
 			else if (exception instanceof Ci.nsIException) {
-				sourceName = exception.filename;
+				sn = exception.filename;
 				lineNumber = exception.lineNumber;
 			}
 			else {
-				sourceName = exception.fileName || sourceName;
+				sn = exception.fileName || sourceName;
 				lineNumber = exception.lineNumber || lineNumber;
+			}
+			if (sn && !sn.contains("unknown ")) {
+				sourceName = sn;
 			}
 		}
 
@@ -157,7 +171,7 @@ exports.log = function(level, message, exception) {
 				levelMsg = "debug";
 		}
 
-		message = "DownThemAll! (" + levelMsg + ") - " + message;
+		message = `DownThemAll! (${levelMsg}) - ${message}`;
 
 		const scriptError = new Instances.ScriptError(
 			message,
@@ -168,15 +182,13 @@ exports.log = function(level, message, exception) {
 			level >= exports.LOG_ERROR ? errorFlag : warningFlag,
 			category);
 		Services.console.logMessage(scriptError);
-		message = getTimeString() + "\n" +
-			message + "\n--> " +
-			sourceName + ":" +
-			lineNumber + ":" +
-			columnNumber + "\n";
+		message = `${getTimeString()}\n${message}\n--> ${sourceName}:${lineNumber}:${columnNumber}\n`;
 
-		var f = new Instances.FileOutputStream(global.file, 0x04 | 0x08 | 0x10, parseInt("664", 8), 0);
-		f.write(message, message.length);
-		f.close();
+		if (global.level <= level) {
+			let f = new Instances.FileOutputStream(global.file, 0x04 | 0x08 | 0x10, parseInt("664", 8), 0);
+			f.write(message, message.length);
+			f.close();
+		}
 	}
 	catch (ex) {
 		Cu.reportError("failed to log");
