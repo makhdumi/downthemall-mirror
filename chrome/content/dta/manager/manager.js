@@ -2565,10 +2565,7 @@ QueueItem.prototype = {
 				//nothing found, break
 				if (!biggest) {
 					break;
-				}				
-
-				if (!this.chunks || this.chunks.length == 0)
-					break;
+				}
 
 				// Dirty hacks for streaming! :D
 				// Instead of splitting the biggest chunk in two, keep chunks fix-sized
@@ -2584,8 +2581,24 @@ QueueItem.prototype = {
 				//let end = biggest.end;
 				//biggest.end = biggest.start + biggest.written + Math.floor(biggest.remainder / 2);
 				let chunk_size = 5*1024*1024;
-				latest.end = latest.start + chunk_size;
-				let end = latest.end + 1 + chunk_size;
+				let max_end = this.totalSize-1;
+				log(LOG_DEBUG, "latest.start="+latest.start)
+				log(LOG_DEBUG, "latest.end="+latest.end)
+				log(LOG_DEBUG, "max_end="+max_end);
+
+				if (latest.start + chunk_size >= max_end) {
+					break;
+				}
+
+				if (this.chunks.length == 1) {
+					latest.end = latest.written + chunk_size;
+				}
+
+				let start = latest.end + 1;
+				let end = Math.min(start + chunk_size, max_end);
+
+				log(LOG_DEBUG, "start="+start);
+				log(LOG_DEBUG, "end="+end);
 
 				downloadNewChunk(this, latest.end + 1, end);
 				rv = true;
