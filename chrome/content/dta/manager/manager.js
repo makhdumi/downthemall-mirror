@@ -2505,10 +2505,14 @@ QueueItem.prototype = {
 			++download.sessionConnections;
 		}
 
+		log(LOG_DEBUG, "Cleaning chunks");
 		cleanChunks(this);
+
+		log(LOG_DEBUG, "Done cleaning chunks");
 
 		try {
 			if (Dialog.offline || this.maxChunks <= this.activeChunks) {
+				log(LOG_DEBUG, "Offline or exceeded chunk count");
 				return false;
 			}
 
@@ -2517,12 +2521,13 @@ QueueItem.prototype = {
 			// we didn't load up anything so let's start the main chunk (which will
 			// grab the info)
 			if (!this.chunks.length) {
+				log(LOG_DEBUG, "Starting the 'main' chunk (pa)");
 				downloadNewChunk(this, 0, 0, true);
 				this.sessionConnections = 0;
 				return false;
 			}
 
-
+			log(LOG_DEBUG, "Starting new chunk loop");
 			// start some new chunks
 			let paused = this.chunks.filter(function (chunk) !(chunk.running || chunk.complete));
 
@@ -2534,6 +2539,7 @@ QueueItem.prototype = {
 
 				// restart paused chunks
 				if (paused.length) {
+					log(LOG_DEBUG, "Resuming paused chunks");
 					let p = paused.shift();
 					downloadChunk(this, p, p.end === 0);
 					rv = true;
@@ -2543,6 +2549,7 @@ QueueItem.prototype = {
 				if (this.chunks.length === 1 &&
 					!!Prefs.loadEndFirst &&
 					this.chunks[0].remainder > 3 * Prefs.loadEndFirst) {
+					log(LOG_DEBUG, "Downloading the end first");					
 					// we should download the end first!
 					let c = this.chunks[0];
 					let end = c.end;
@@ -2562,45 +2569,60 @@ QueueItem.prototype = {
 					}
 				}
 
-				//nothing found, break
-				if (!biggest) {
-					break;
-				}
 
 				// Dirty hacks for streaming! :D
 				// Instead of splitting the biggest chunk in two, keep chunks fix-sized
+				let chunk_size = 15*1024*1024; // 15 MB
+
+				// Find the latest free space
+				let i = 0;
 				let latest = this.chunks[0];
-				for (let chunk of this.chunks) {
+				for (; i < this.chunks.length; i++) {
+					let chunk = this.chunks[i];
+					// If we've hit a discontinuity, break here so that we use the last chunk as our latest one
 					if (chunk.start > latest.end + 1) {
-						// discontinuous!
+						i--;
+						log(LOG_DEBUG, "CHUNKY: Discontinuity hit! Found empty space after " + i);
 						break;
 					}
+
 					latest = chunk;
+
+					// Is this a big running chunk? If so, let's break it off and use the end
+					if (latest.running && latest.remainder >= chunk_size + MIN_CHUNK_SIZE) {
+						log(LOG_DEBUG, "CHUNKY: Found large chunk. Trimming: " + latest);
+						latest.end = latest.start + latest.written + MIN_CHUNK_SIZE;
+						break;
+					}
+
 				}
+
+				this.dumpScoreboard();
+
+				let max_end = i + 1 < this.chunks.length ? this.chunks[i + 1].start - 1 : this.totalSize - 1;
 
 				//let end = biggest.end;
 				//biggest.end = biggest.start + biggest.written + Math.floor(biggest.remainder / 2);
-				let chunk_size = 5*1024*1024;
-				let max_end = this.totalSize-1;
-				log(LOG_DEBUG, "latest.start="+latest.start)
-				log(LOG_DEBUG, "latest.end="+latest.end)
-				log(LOG_DEBUG, "max_end="+max_end);
+
+				log(LOG_DEBUG, "CHUNKY: latest is " + latest);
+				log(LOG_DEBUG, "CHUNKY: latest.start="+latest.start)
+				log(LOG_DEBUG, "CHUNKY: latest.end="+latest.end)
+				log(LOG_DEBUG, "CHUNKY: latest.total="+latest.total)				
+				log(LOG_DEBUG, "CHUNKY: max_end="+max_end);
 
 				if (latest.start + chunk_size >= max_end) {
+					log(LOG_DEBUG, "CHUNKY: latest.start+chunk_size exceeds max end! finished???!");
 					break;
-				}
-
-				if (this.chunks.length == 1) {
-					latest.end = latest.written + chunk_size;
 				}
 
 				let start = latest.end + 1;
 				let end = Math.min(start + chunk_size, max_end);
 
-				log(LOG_DEBUG, "start="+start);
-				log(LOG_DEBUG, "end="+end);
+				log(LOG_DEBUG, "CHUNKY: start="+start);
+				log(LOG_DEBUG, "CHUNKY: end="+end);
+				log(LOG_DEBUG, "CHUNKY: length="+(end-start+1));
 
-				downloadNewChunk(this, latest.end + 1, end);
+				downloadNewChunk(this, start, end);
 				rv = true;
 			}
 
